@@ -22,6 +22,11 @@ def escape_html(s: str) -> str:
     )
 
 
+def escape_drive_query_value(s: str) -> str:
+    """Escape a value interpolated into a Google Drive query literal."""
+    return s.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def format_size(num_bytes: Union[int, float]) -> str:
     """Format bytes into readable human format (KB, MB, GB, TB)."""
     if num_bytes is None:

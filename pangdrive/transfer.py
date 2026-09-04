@@ -22,7 +22,13 @@ from rich.progress import (
 from .baidu_client import BaiduClient
 from .config import config
 from .gdrive_client import GoogleDriveClient
-from .utils import format_size, guess_mime_type, normalize_path, split_storage_uri
+from .utils import (
+    escape_drive_query_value,
+    format_size,
+    guess_mime_type,
+    normalize_path,
+    split_storage_uri,
+)
 
 console = Console()
 
@@ -120,29 +126,57 @@ class TransferEngine:
         if ondup == "skip":
             if direction == TransferDirection.BAIDU_TO_GDRIVE:
                 try:
+                    source_meta = self.baidu.meta(src_p)
+                    source_size = source_meta[0].get("size") if source_meta else None
                     parent_p = os.path.dirname(dst_p) or "/"
                     parent_id = self.gdrive.resolve_path(parent_p)
-                    q = f"name = '{filename}' and '{parent_id}' in parents and trashed = false"
+                    q = (
+                        f"name = '{escape_drive_query_value(filename)}' and "
+                        f"'{parent_id}' in parents and trashed = false"
+                    )
                     res = self.gdrive.session.get(
                         f"{self.gdrive.DRIVE_API_BASE}/files",
                         headers=self.gdrive._get_headers(),
                         params={"q": q, "fields": "files(id, size)"},
                     ).json()
                     files = res.get("files", [])
-                    if files:
+                    if (
+                        source_size is not None
+                        and files
+                        and files[0].get("size") is not None
+                        and int(files[0]["size"]) == int(source_size)
+                    ):
                         if progress and task_id is not None:
-                            progress.update(task_id, description=f"[yellow]Skipped (exists): {filename}")
+                            progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
                         return {"status": "skipped", "file": filename}
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             else:
                 try:
+                    parent_p = os.path.dirname(src_p) or "/"
+                    parent_id = self.gdrive.resolve_path(parent_p)
+                    q = (
+                        f"name = '{escape_drive_query_value(filename)}' and "
+                        f"'{parent_id}' in parents and trashed = false"
+                    )
+                    source_files = self.gdrive.session.get(
+                        f"{self.gdrive.DRIVE_API_BASE}/files",
+                        headers=self.gdrive._get_headers(),
+                        params={"q": q, "fields": "files(id, size, mimeType)"},
+                    ).json().get("files", [])
+                    source_size = source_files[0].get("size") if source_files else None
                     m = self.baidu.meta(dst_p)
-                    if m and len(m) > 0 and not m[0].get("isdir"):
+                    if (
+                        source_size is not None
+                        and m
+                        and not m[0].get("isdir")
+                        and m[0].get("size") is not None
+                        and int(m[0]["size"]) == int(source_size)
+                    ):
                         if progress and task_id is not None:
-                            progress.update(task_id, description=f"[yellow]Skipped (exists): {filename}")
+                            progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
                         return {"status": "skipped", "file": filename}
-                except Exception:
+                except (TypeError, ValueError):
                     pass
 
         # Execute Transfer
@@ -203,7 +237,10 @@ class TransferEngine:
             # Resolve GDrive file ID
             parent_p = os.path.dirname(src_p) or "/"
             parent_id = self.gdrive.resolve_path(parent_p)
-            q = f"name = '{filename}' and '{parent_id}' in parents and trashed = false"
+            q = (
+                f"name = '{escape_drive_query_value(filename)}' and "
+                f"'{parent_id}' in parents and trashed = false"
+            )
             f_resp = self.gdrive.session.get(
                 f"{self.gdrive.DRIVE_API_BASE}/files",
                 headers=self.gdrive._get_headers(),
@@ -262,6 +299,7 @@ class TransferEngine:
         progress_callback: Optional[Any] = None,
         cancel_event: Optional[Any] = None,
         show_console_progress: bool = True,
+        use_disk_cache: bool = False,
     ) -> Dict[str, Any]:
         """Synchronize an entire folder between Baidu Netdisk and Google Drive."""
         if cancel_event and cancel_event.is_set():
@@ -371,6 +409,7 @@ class TransferEngine:
                         task_id=file_task,
                         callback=_chunk_cb if progress_callback else None,
                         cancel_event=cancel_event,
+                        use_disk_cache=use_disk_cache,
                     )
                     if res.get("status") == "skipped":
                         skipped_count += 1

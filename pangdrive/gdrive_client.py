@@ -13,7 +13,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .config import config
-from .utils import guess_mime_type, normalize_path
+from .utils import escape_drive_query_value, guess_mime_type, normalize_path
 
 
 class GoogleDriveClient:
@@ -198,7 +198,7 @@ class GoogleDriveClient:
                 continue
 
             query = (
-                f"name = '{part}' and '{curr_id}' in parents "
+                f"name = '{escape_drive_query_value(part)}' and '{curr_id}' in parents "
                 f"and mimeType = '{self.FOLDER_MIME}' and trashed = false"
             )
             url = f"{self.DRIVE_API_BASE}/files"
@@ -240,28 +240,34 @@ class GoogleDriveClient:
 
         url = f"{self.DRIVE_API_BASE}/files"
         query = f"'{target_id}' in parents and trashed = false"
-        params = {
-            "q": query,
-            "fields": "files(id, name, mimeType, size, md5Checksum, modifiedTime, createdTime)",
-            "pageSize": 1000,
-        }
-        resp = self.session.get(url, headers=self._get_headers(), params=params, timeout=25)
-        data = self._check(resp)
-
         items = []
-        for f in data.get("files", []):
-            is_dir = f.get("mimeType") == self.FOLDER_MIME
-            item_path = f"{path}/{f['name']}".replace("//", "/")
-            items.append({
-                "id": f["id"],
-                "name": f["name"],
-                "path": item_path,
-                "isdir": is_dir,
-                "size": int(f.get("size", 0)),
-                "md5": f.get("md5Checksum", ""),
-                "mtime": f.get("modifiedTime", ""),
-                "mime_type": f.get("mimeType", ""),
-            })
+        page_token = None
+        while True:
+            params = {
+                "q": query,
+                "fields": "nextPageToken, files(id, name, mimeType, size, md5Checksum, modifiedTime, createdTime)",
+                "pageSize": 1000,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            resp = self.session.get(url, headers=self._get_headers(), params=params, timeout=25)
+            data = self._check(resp)
+            for f in data.get("files", []):
+                is_dir = f.get("mimeType") == self.FOLDER_MIME
+                item_path = f"{path}/{f['name']}".replace("//", "/")
+                items.append({
+                    "id": f["id"],
+                    "name": f["name"],
+                    "path": item_path,
+                    "isdir": is_dir,
+                    "size": int(f.get("size", 0)),
+                    "md5": f.get("md5Checksum", ""),
+                    "mtime": f.get("modifiedTime", ""),
+                    "mime_type": f.get("mimeType", ""),
+                })
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
 
         # Sort: directories first, then alphabetically
         items.sort(key=lambda x: (0 if x["isdir"] else 1, x["name"].lower()))
@@ -278,7 +284,7 @@ class GoogleDriveClient:
             parent_p = os.path.dirname(norm_p) or "/"
             filename = os.path.basename(norm_p)
             parent_id = self.resolve_path(parent_p)
-            q = f"name = '{filename}' and '{parent_id}' in parents and trashed = false"
+            q = f"name = '{escape_drive_query_value(filename)}' and '{parent_id}' in parents and trashed = false"
             resp = self.session.get(
                 f"{self.DRIVE_API_BASE}/files",
                 headers=self._get_headers(),
@@ -345,7 +351,7 @@ class GoogleDriveClient:
             mime_type = guess_mime_type(filename)
 
         # Check existing file with same name
-        query = f"name = '{filename}' and '{parent_id}' in parents and trashed = false"
+        query = f"name = '{escape_drive_query_value(filename)}' and '{parent_id}' in parents and trashed = false"
         chk_resp = self.session.get(
             f"{self.DRIVE_API_BASE}/files",
             headers=self._get_headers(),
@@ -356,7 +362,12 @@ class GoogleDriveClient:
 
         if existing:
             if ondup == "skip":
-                return {"id": existing[0]["id"], "name": filename, "status": "skipped"}
+                try:
+                    existing_size = existing[0].get("size")
+                    if size is not None and existing_size is not None and int(existing_size) == size:
+                        return {"id": existing[0]["id"], "name": filename, "status": "skipped"}
+                except (TypeError, ValueError):
+                    pass
             elif ondup == "overwrite":
                 # Delete existing file before re-upload
                 for old in existing:

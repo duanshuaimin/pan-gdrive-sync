@@ -92,25 +92,35 @@ class BaiduClient:
     def list_dir(self, remote_path: str = "/") -> List[Dict[str, Any]]:
         path = normalize_path(remote_path)
         url = f"{self.PCS_API}/file"
-        params = {
-            "method": "list",
-            "app_id": self.cfg.data["baidu"]["app_id"],
-            "dir": path,
-        }
-        resp = self.session.get(url, params=params, timeout=25)
-        data = self._check(resp)
         items = []
-        for it in data.get("list", []):
-            raw_p = it.get("path", "")
-            items.append({
-                "path": raw_p,
-                "name": it.get("server_filename") or os.path.basename(raw_p),
-                "isdir": bool(it.get("isdir", 0)),
-                "size": it.get("size", 0),
-                "mtime": it.get("mtime", 0),
-                "md5": it.get("md5", ""),
-                "fs_id": it.get("fs_id", 0),
-            })
+        limit = 1000
+        start = 0
+        while True:
+            params = {
+                "method": "list",
+                "app_id": self.cfg.data["baidu"]["app_id"],
+                "dir": path,
+                "start": start,
+                # PCS expects its limit window as "start-end".
+                "limit": f"{start}-{start + limit}",
+            }
+            resp = self.session.get(url, params=params, timeout=25)
+            data = self._check(resp)
+            page = data.get("list", [])
+            for it in page:
+                raw_p = it.get("path", "")
+                items.append({
+                    "path": raw_p,
+                    "name": it.get("server_filename") or os.path.basename(raw_p),
+                    "isdir": bool(it.get("isdir", 0)),
+                    "size": it.get("size", 0),
+                    "mtime": it.get("mtime", 0),
+                    "md5": it.get("md5", ""),
+                    "fs_id": it.get("fs_id", 0),
+                })
+            if len(page) < limit:
+                break
+            start += len(page)
         return items
 
     def meta(self, paths: Union[str, List[str]]) -> List[Dict[str, Any]]:

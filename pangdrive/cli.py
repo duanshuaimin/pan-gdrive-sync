@@ -288,7 +288,8 @@ def copy_cmd(src_uri, dst_uri, overwrite, disk_cache):
 @click.argument("dst_uri")
 @click.option("--overwrite/--skip", default=True, help="Overwrite or skip existing files")
 @click.option("--no-recursive", is_flag=True, help="Do not recurse into subdirectories")
-def sync_cmd(src_uri, dst_uri, overwrite, no_recursive):
+@click.option("--disk-cache", is_flag=True, help="Use local temporary disk buffer instead of direct streaming pipe")
+def sync_cmd(src_uri, dst_uri, overwrite, no_recursive, disk_cache):
     """Synchronize an entire folder between Baidu Netdisk and Google Drive.
 
     Example: pan-gdrive-sync sync baidu:/folder gdrive:/backup/
@@ -310,6 +311,7 @@ def sync_cmd(src_uri, dst_uri, overwrite, no_recursive):
             dst_path,
             ondup=ondup,
             recursive=not no_recursive,
+            use_disk_cache=disk_cache,
         )
     except Exception as e:
         console.print(f"[bold red]Sync failed:[/bold red] {e}")

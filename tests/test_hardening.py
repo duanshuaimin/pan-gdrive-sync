@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import tempfile
@@ -306,3 +307,177 @@ class TestDiskCacheCleanup(unittest.TestCase):
 
         self.assertEqual(len(created), 1)
         self.assertFalse(os.path.exists(created[0]))
+
+
+class TestDriveEscape(unittest.TestCase):
+    def test_escapes_backslashes_and_quotes(self):
+        from pangdrive.utils import escape_drive_query_value
+
+        self.assertEqual(
+            escape_drive_query_value(r"folder\O'Brien"),
+            r"folder\\O\'Brien",
+        )
+
+
+class TestDirectoryPagination(unittest.TestCase):
+    def test_gdrive_list_dir_follows_next_page_token(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.session = mock.MagicMock()
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(
+            side_effect=[
+                {
+                    "files": [
+                        {
+                            "id": "one",
+                            "name": "one.txt",
+                            "mimeType": "text/plain",
+                            "size": "1",
+                        }
+                    ],
+                    "nextPageToken": "next-page",
+                },
+                {
+                    "files": [
+                        {
+                            "id": "two",
+                            "name": "two.txt",
+                            "mimeType": "text/plain",
+                            "size": "2",
+                        }
+                    ]
+                },
+            ]
+        )
+
+        items = client.list_dir("/source", folder_id="folder-id")
+
+        self.assertEqual([item["name"] for item in items], ["one.txt", "two.txt"])
+        self.assertEqual(client.session.get.call_count, 2)
+        self.assertNotIn("pageToken", client.session.get.call_args_list[0].kwargs["params"])
+        self.assertEqual(
+            client.session.get.call_args_list[1].kwargs["params"]["pageToken"],
+            "next-page",
+        )
+
+    def test_baidu_list_dir_follows_start_and_limit(self):
+        from pangdrive.baidu_client import BaiduClient
+
+        client = BaiduClient.__new__(BaiduClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"baidu": {"app_id": "app-id"}}
+        client.session = mock.MagicMock()
+        client._check = mock.MagicMock(
+            side_effect=[
+                {"list": [{"path": "/source/one.txt", "size": 1}] * 1000},
+                {"list": [{"path": "/source/two.txt", "size": 2}]},
+            ]
+        )
+
+        items = client.list_dir("/source")
+
+        self.assertEqual(len(items), 1001)
+        self.assertEqual(client.session.get.call_count, 2)
+        self.assertEqual(client.session.get.call_args_list[0].kwargs["params"]["start"], 0)
+        self.assertEqual(client.session.get.call_args_list[1].kwargs["params"]["start"], 1000)
+
+
+class TestSkipBySize(unittest.TestCase):
+    def test_gdrive_upload_skip_requires_known_equal_size(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(
+            side_effect=[
+                {"files": [{"id": "old-id", "size": "9"}]},
+                {"id": "new-id"},
+            ]
+        )
+        client.session.post.return_value.status_code = 200
+        client.session.post.return_value.headers = {"Location": "https://upload.example"}
+
+        result = client.upload_stream(
+            io.BytesIO(b"0123456789"),
+            "/dest/file.txt",
+            size=10,
+            ondup="skip",
+        )
+
+        self.assertEqual(result, {"id": "new-id"})
+        client.session.post.assert_called_once()
+
+    def test_transfer_skip_checks_baidu_source_size_before_destination(self):
+        engine = TransferEngine.__new__(TransferEngine)
+        engine.baidu = mock.MagicMock()
+        engine.gdrive = mock.MagicMock()
+        engine.baidu.meta.return_value = [{"size": 10, "isdir": False}]
+        engine.gdrive.resolve_path.return_value = "parent-id"
+        engine.gdrive.session.get.return_value.json.return_value = {
+            "files": [{"id": "old-id", "size": "9"}]
+        }
+        response = mock.MagicMock()
+        response.raw = io.BytesIO(b"0123456789")
+        engine.baidu.download_stream.return_value = (response, 10, "")
+
+        engine.transfer_file(
+            "baidu", "/source/file.txt", "gdrive", "/dest/file.txt", ondup="skip"
+        )
+
+        engine.baidu.meta.assert_called_once_with("/source/file.txt")
+        engine.gdrive.upload_stream.assert_called_once()
+
+
+class TestSyncDiskCacheAndHistory(unittest.TestCase):
+    def test_sync_passes_disk_cache_to_each_file_transfer(self):
+        engine = TransferEngine.__new__(TransferEngine)
+        engine.baidu = mock.MagicMock()
+        engine.gdrive = mock.MagicMock()
+        engine.baidu.list_dir.return_value = [
+            {"path": "/source/file.txt", "name": "file.txt", "isdir": False, "size": 1}
+        ]
+        engine.transfer_file = mock.MagicMock(return_value={"status": "success"})
+
+        engine.sync_directory(
+            "baidu",
+            "/source",
+            "gdrive",
+            "/dest",
+            use_disk_cache=True,
+            show_console_progress=False,
+        )
+
+        self.assertTrue(engine.transfer_file.call_args.kwargs["use_disk_cache"])
+
+    def test_sync_cli_accepts_disk_cache_flag(self):
+        from click.testing import CliRunner
+        from pangdrive.cli import cli
+
+        engine = mock.MagicMock()
+        with mock.patch("pangdrive.cli.TransferEngine", return_value=engine):
+            result = CliRunner().invoke(
+                cli, ["sync", "baidu:/source", "gdrive:/dest", "--disk-cache"]
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(engine.sync_directory.call_args.kwargs["use_disk_cache"])
+
+    def test_history_clear_removes_only_finished_tasks(self):
+        from pangdrive.web.app import create_app
+
+        cfg = TestWebBasicAuth()._config_with_web_auth()
+        task_manager = mock.MagicMock()
+        token = base64.b64encode(b"admin:secret").decode()
+        with mock.patch("pangdrive.web.app.config", cfg), mock.patch(
+            "pangdrive.web.app.TaskManager.get_instance", return_value=task_manager
+        ):
+            response = create_app().test_client().post(
+                "/api/history/clear", headers={"Authorization": f"Basic {token}"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        task_manager.storage.clear_tasks.assert_called_with(only_finished=True)

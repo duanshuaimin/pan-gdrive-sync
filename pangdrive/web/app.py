@@ -467,7 +467,7 @@ def create_app() -> Flask:
 
     @app.route("/api/history/clear", methods=["POST"])
     def clear_history():
-        task_mgr.storage.clear_tasks(only_finished=False)
+        task_mgr.storage.clear_tasks(only_finished=True)
         task_mgr.clear_completed()
         return jsonify({"ok": True})
 
