@@ -136,6 +136,33 @@ pan-gdrive-sync sync baidu:/Docs gdrive:/Docs --no-recursive
 pan-gdrive-sync quota
 ```
 
+### 5. 持久化同步任务与定时计划 (`job`)
+无需每次手动输入命令，您可以将常用的跨云同步策略保存为**持久化任务规则**，支持开机常驻定时自动同步：
+
+```bash
+# 列出所有已保存的持久化同步任务
+pan-gdrive-sync job list
+
+# 新建持久化同步任务（例如每 1 小时自动同步一次，跳过已存在文件）
+pan-gdrive-sync job add baidu:/2015-2026语文中考真题 gdrive:/Archives/ --name "真题资料定时同步" --interval 3600 --skip
+
+# 立即手动触发执行指定持久化任务
+pan-gdrive-sync job run job_1788521964_2ec45b
+
+# 暂停或恢复任务调度
+pan-gdrive-sync job toggle job_1788521964_2ec45b
+
+# 删除持久化任务规则
+pan-gdrive-sync job delete job_1788521964_2ec45b
+```
+
+### 6. 查看持久化历史传输记录 (`history`)
+所有单次传输与定时同步任务的执行状态、传输耗时、错误日志均持久化记录在本地 SQLite 数据库中，即便服务重启也不丢失：
+
+```bash
+pan-gdrive-sync history --limit 20
+```
+
 ---
 
 ## 🌐 Web 控制台交互界面 (Web UI Dashboard)

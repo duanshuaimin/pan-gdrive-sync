@@ -37,6 +37,10 @@
 
     <!-- Header Actions -->
     <div class="header-actions">
+      <button class="btn btn-secondary" onclick="openJobsModal()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        <span>同步规则 / 计划</span>
+      </button>
       <button class="btn btn-secondary" onclick="openModal('quotaModal')">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
         <span>存储配额</span>
@@ -187,6 +191,14 @@
           <input type="checkbox" id="transferSkipExisting" checked />
           <label for="transferSkipExisting" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">若目标文件已存在则跳过 (--skip)</label>
         </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+          <input type="checkbox" id="transferSaveAsJob" onchange="document.getElementById('jobNameGroup').style.display = this.checked ? 'flex' : 'none';" />
+          <label for="transferSaveAsJob" style="font-size: 0.85rem; color: var(--accent-blue); cursor: pointer; font-weight: 500;">同时保存为持久化同步任务规则</label>
+        </div>
+        <div class="form-group" id="jobNameGroup" style="display: none; margin-top: 0.25rem;">
+          <label class="form-label">持久化规则名称</label>
+          <input type="text" class="form-input" id="transferJobName" placeholder="例如: 语文真题资料归档" />
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('transferModal')">取消</button>
@@ -301,6 +313,77 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('mkdirModal')">取消</button>
         <button class="btn btn-primary" onclick="confirmMkdir()">确认创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Persistent Sync Jobs List -->
+  <div class="modal-overlay" id="jobsModal">
+    <div class="modal-card" style="max-width: 720px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+          <span>持久化同步任务规则 & 定时计划</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="openNewJobModal()">+ 新建同步规则</button>
+          <button class="btn btn-secondary btn-icon" onclick="closeModal('jobsModal')">✕</button>
+        </div>
+      </div>
+      <div class="modal-body" id="jobsModalBody">
+        <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0;">正在加载持久化同步任务...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('jobsModal')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create New Persistent Sync Job -->
+  <div class="modal-overlay" id="newJobModal">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <span>新建持久化同步规则</span>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('newJobModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">规则名称</label>
+          <input type="text" class="form-input" id="newJobName" placeholder="例如: 中考语文真题自动同步" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">源地址 (URI)</label>
+          <input type="text" class="form-input" id="newJobSource" placeholder="例如: baidu:/2015-2026语文中考真题" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">目标地址 (URI)</label>
+          <input type="text" class="form-input" id="newJobDest" placeholder="例如: gdrive:/Backup/真题归档/" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">同步模式</label>
+          <select class="form-input" id="newJobMode">
+            <option value="sync">整目录递归同步 (Sync)</option>
+            <option value="copy">单文件 / 平铺复制 (Copy)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">执行频率 / 周期</label>
+          <select class="form-input" id="newJobInterval">
+            <option value="0">仅手动触发 (Manual Trigger)</option>
+            <option value="1800">每 30 分钟 (Every 30 mins)</option>
+            <option value="3600">每 1 小时 (Every 1 hour)</option>
+            <option value="21600">每 6 小时 (Every 6 hours)</option>
+            <option value="86400">每天执行一次 (Daily)</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
+          <input type="checkbox" id="newJobSkipExisting" checked />
+          <label for="newJobSkipExisting" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">若目标文件已存在则跳过 (--skip)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('newJobModal')">取消</button>
+        <button class="btn btn-primary" onclick="saveNewJob()">保存规则</button>
       </div>
     </div>
   </div>

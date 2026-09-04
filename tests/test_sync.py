@@ -124,6 +124,114 @@ class TestPanGDriveSync(unittest.TestCase):
 
         print("Test 05 passed: Web UI and REST API endpoints functional")
 
+    def test_06_persistent_storage_and_jobs(self):
+        import tempfile
+        import os
+        from pangdrive.storage import Storage
+        from pangdrive.web.app import create_app
+
+        # 1. Test isolated SQLite Storage
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_db = tmp.name
+
+        try:
+            st = Storage(db_path=tmp_db)
+
+            # Create persistent sync job
+            job = st.create_job(
+                job_id="test_job_1",
+                name="Test 真题自动同步",
+                source="baidu:/2015-2026语文中考真题",
+                dest="gdrive:/Backup/",
+                mode="sync",
+                skip_existing=True,
+                recursive=True,
+                interval_seconds=3600,
+            )
+            self.assertIsNotNone(job)
+            self.assertEqual(job["name"], "Test 真题自动同步")
+            self.assertEqual(job["interval_seconds"], 3600)
+            self.assertEqual(job["status"], "active")
+
+            # List jobs
+            jobs = st.list_jobs()
+            self.assertEqual(len(jobs), 1)
+
+            # Update job
+            st.update_job("test_job_1", status="paused", name="Test 已暂停")
+            updated = st.get_job("test_job_1")
+            self.assertEqual(updated["status"], "paused")
+            self.assertEqual(updated["name"], "Test 已暂停")
+
+            # Save task execution log
+            st.save_task({
+                "id": "test_task_1",
+                "job_id": "test_job_1",
+                "source": "baidu:/2015-2026语文中考真题",
+                "dest": "gdrive:/Backup/",
+                "mode": "sync",
+                "status": "running",
+                "total_bytes": 1048576,
+                "transferred_bytes": 524288,
+            })
+            tasks = st.list_tasks()
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["status"], "running")
+
+            # Test crash recovery: clean interrupted tasks
+            interrupted_count = st.clean_interrupted_tasks()
+            self.assertEqual(interrupted_count, 1)
+            recovered_task = st.get_task("test_task_1")
+            self.assertEqual(recovered_task["status"], "interrupted")
+
+            # Delete job
+            self.assertTrue(st.delete_job("test_job_1"))
+            self.assertEqual(len(st.list_jobs()), 0)
+
+            # 2. Test REST API for jobs
+            app = create_app()
+            client = app.test_client()
+
+            # Create job via API
+            res = client.post("/api/jobs", json={
+                "name": "API测试规则",
+                "source": "baidu:/Docs",
+                "dest": "gdrive:/BackupDocs",
+                "mode": "sync",
+                "interval_seconds": 1800,
+            })
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertTrue(data["ok"])
+            created_id = data["job"]["id"]
+
+            # Query jobs via API
+            res_get = client.get("/api/jobs")
+            self.assertEqual(res_get.status_code, 200)
+            job_ids = [j["id"] for j in res_get.get_json()["jobs"]]
+            self.assertIn(created_id, job_ids)
+
+            # Toggle job via API
+            res_toggle = client.post(f"/api/jobs/{created_id}/toggle")
+            self.assertEqual(res_toggle.status_code, 200)
+            self.assertEqual(res_toggle.get_json()["job"]["status"], "paused")
+
+            # Query history via API
+            res_hist = client.get("/api/history")
+            self.assertEqual(res_hist.status_code, 200)
+            self.assertTrue(res_hist.get_json()["ok"])
+
+            # Delete job via API
+            res_del = client.delete(f"/api/jobs/{created_id}")
+            self.assertEqual(res_del.status_code, 200)
+            self.assertTrue(res_del.get_json()["ok"])
+
+            print("Test 06 passed: Persistent SQLite storage, jobs, and history verified")
+
+        finally:
+            if os.path.exists(tmp_db):
+                os.remove(tmp_db)
+
 
 if __name__ == "__main__":
     unittest.main()

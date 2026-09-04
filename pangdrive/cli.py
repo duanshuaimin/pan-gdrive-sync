@@ -316,6 +316,259 @@ def web_cmd(host, port, debug):
     app.run(host=host, port=port, debug=debug, threaded=True)
 
 
+# ==========================================
+# Persistent Sync Jobs & History Commands
+# ==========================================
+
+@cli.group("job")
+def job_group():
+    """Manage persistent sync jobs and automatic schedules."""
+    pass
+
+
+@job_group.command("list")
+def job_list_cmd():
+    """List all configured persistent sync jobs."""
+    from .storage import Storage
+    storage = Storage.get_instance()
+    jobs = storage.list_jobs()
+
+    if not jobs:
+        console.print("[yellow]No persistent sync jobs found. Use 'pan-gdrive-sync job add' to create one.[/yellow]")
+        return
+
+    table = Table(title="📋 Persistent Sync Jobs", show_lines=True)
+    table.add_column("Job ID", style="bold cyan")
+    table.add_column("Name", style="bold")
+    table.add_column("Source ➔ Destination")
+    table.add_column("Mode", justify="center")
+    table.add_column("Interval", justify="center")
+    table.add_column("Status", justify="center")
+    table.add_column("Last Status", justify="center")
+
+    for j in jobs:
+        interval_s = j.get("interval_seconds", 0)
+        if interval_s <= 0:
+            interval_str = "Manual"
+        elif interval_s < 3600:
+            interval_str = f"Every {interval_s // 60}m"
+        elif interval_s < 86400:
+            interval_str = f"Every {interval_s // 3600}h"
+        else:
+            interval_str = f"Every {interval_s // 86400}d"
+
+        status_style = "[green]active[/green]" if j.get("status") == "active" else "[yellow]paused[/yellow]"
+        last_st = j.get("last_status") or "-"
+        last_st_style = f"[green]{last_st}[/green]" if last_st == "completed" else (f"[red]{last_st}[/red]" if last_st == "failed" else last_st)
+
+        table.add_row(
+            j["id"],
+            j["name"],
+            f"{j['source']} ➔ {j['dest']}",
+            j.get("mode", "sync").upper(),
+            interval_str,
+            status_style,
+            last_st_style,
+        )
+
+    console.print(table)
+
+
+@job_group.command("add")
+@click.argument("src_uri")
+@click.argument("dst_uri")
+@click.option("--name", "-n", prompt="Job Name", help="Descriptive name for this sync job")
+@click.option("--interval", "-i", default=0, type=int, help="Auto-run interval in seconds (0 = manual only)")
+@click.option("--overwrite/--skip", default=False, help="Overwrite or skip existing files")
+@click.option("--no-recursive", is_flag=True, help="Do not recurse into subdirectories")
+def job_add_cmd(src_uri, dst_uri, name, interval, overwrite, no_recursive):
+    """Add a new persistent sync job."""
+    from .storage import Storage
+    from .utils import split_storage_uri
+    import uuid
+    import time
+
+    try:
+        split_storage_uri(src_uri)
+        split_storage_uri(dst_uri)
+    except Exception as e:
+        console.print(f"[bold red]URI Error:[/bold red] {e}")
+        sys.exit(1)
+
+    storage = Storage.get_instance()
+    job_id = f"job_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    job = storage.create_job(
+        job_id=job_id,
+        name=name,
+        source=src_uri,
+        dest=dst_uri,
+        mode="sync",
+        skip_existing=not overwrite,
+        recursive=not no_recursive,
+        interval_seconds=interval,
+    )
+    console.print(f"[bold green]✓ Persistent sync job created successfully![/bold green] (ID: [bold cyan]{job_id}[/bold cyan])")
+
+
+@job_group.command("run")
+@click.argument("job_id")
+def job_run_cmd(job_id):
+    """Run a persistent sync job immediately."""
+    from .storage import Storage
+    from .transfer import TransferEngine
+    from .utils import split_storage_uri
+
+    storage = Storage.get_instance()
+    job = storage.get_job(job_id)
+    if not job:
+        console.print(f"[bold red]Error: Job not found with ID: {job_id}[/bold red]")
+        sys.exit(1)
+
+    console.print(f"[bold cyan]Running Persistent Job:[/bold cyan] {job['name']} ({job['source']} ➔ {job['dest']})")
+    src_p, src_path = split_storage_uri(job["source"])
+    dst_p, dst_path = split_storage_uri(job["dest"])
+
+    engine = TransferEngine()
+    ondup = "skip" if job.get("skip_existing") else "overwrite"
+
+    import time
+    start_t = time.time()
+    task_id = f"task_{int(start_t)}"
+    storage.save_task({
+        "id": task_id,
+        "job_id": job_id,
+        "source": job["source"],
+        "dest": job["dest"],
+        "mode": job["mode"],
+        "status": "running",
+        "started_at": start_t,
+        "created_at": start_t,
+    })
+
+    try:
+        if job["mode"] == "sync":
+            res = engine.sync_directory(
+                src_p,
+                src_path,
+                dst_p,
+                dst_path,
+                ondup=ondup,
+                recursive=bool(job.get("recursive", 1)),
+            )
+            total_bytes = res.get("total_bytes", 0)
+        else:
+            engine.transfer_file(src_p, src_path, dst_p, dst_path, ondup=ondup)
+            total_bytes = 0
+
+        now = time.time()
+        storage.save_task({
+            "id": task_id,
+            "job_id": job_id,
+            "source": job["source"],
+            "dest": job["dest"],
+            "mode": job["mode"],
+            "status": "completed",
+            "total_bytes": total_bytes,
+            "transferred_bytes": total_bytes,
+            "finished_at": now,
+        })
+        storage.update_job(job_id, last_run_at=now, last_status="completed")
+        console.print(f"[bold green]✓ Job execution completed successfully![/bold green]")
+    except Exception as e:
+        now = time.time()
+        storage.save_task({
+            "id": task_id,
+            "job_id": job_id,
+            "source": job["source"],
+            "dest": job["dest"],
+            "mode": job["mode"],
+            "status": "failed",
+            "error": str(e),
+            "finished_at": now,
+        })
+        storage.update_job(job_id, last_run_at=now, last_status="failed")
+        console.print(f"[bold red]Job execution failed:[/bold red] {e}")
+        sys.exit(1)
+
+
+@job_group.command("toggle")
+@click.argument("job_id")
+def job_toggle_cmd(job_id):
+    """Pause or resume a persistent sync job."""
+    from .storage import Storage
+    storage = Storage.get_instance()
+    job = storage.get_job(job_id)
+    if not job:
+        console.print(f"[bold red]Job not found: {job_id}[/bold red]")
+        sys.exit(1)
+
+    new_status = "paused" if job["status"] == "active" else "active"
+    storage.update_job(job_id, status=new_status)
+    console.print(f"Job [bold cyan]{job_id}[/bold cyan] status updated to [bold]{new_status}[/bold]")
+
+
+@job_group.command("delete")
+@click.argument("job_id")
+def job_delete_cmd(job_id):
+    """Delete a persistent sync job."""
+    from .storage import Storage
+    storage = Storage.get_instance()
+    if storage.delete_job(job_id):
+        console.print(f"[bold green]✓ Job {job_id} deleted successfully![/bold green]")
+    else:
+        console.print(f"[bold red]Job not found: {job_id}[/bold red]")
+
+
+@cli.command("history")
+@click.option("--limit", "-l", default=20, help="Maximum number of historical tasks to show")
+def history_cmd(limit):
+    """View persistent cross-cloud transfer task history."""
+    import datetime
+    from .storage import Storage
+    from .utils import format_size
+
+    storage = Storage.get_instance()
+    tasks = storage.list_tasks(limit=limit)
+
+    if not tasks:
+        console.print("[yellow]No task history records found.[/yellow]")
+        return
+
+    table = Table(title=f"📜 Transfer History (Last {len(tasks)} runs)", show_lines=True)
+    table.add_column("Task ID", style="cyan")
+    table.add_column("Time", style="dim")
+    table.add_column("Source ➔ Dest")
+    table.add_column("Mode", justify="center")
+    table.add_column("Status", justify="center")
+    table.add_column("Transferred", justify="right")
+
+    for t in tasks:
+        dt_str = datetime.datetime.fromtimestamp(t["created_at"]).strftime("%Y-%m-%d %H:%M")
+        status = t["status"]
+        if status == "completed":
+            st_str = "[green]completed[/green]"
+        elif status == "failed":
+            st_str = "[red]failed[/red]"
+        elif status == "interrupted":
+            st_str = "[yellow]interrupted[/yellow]"
+        elif status == "cancelled":
+            st_str = "[magenta]cancelled[/magenta]"
+        else:
+            st_str = status
+
+        size_str = format_size(t.get("transferred_bytes", 0))
+        table.add_row(
+            t["id"],
+            dt_str,
+            f"{t['source']} ➔ {t['dest']}",
+            t["mode"].upper(),
+            st_str,
+            size_str,
+        )
+
+    console.print(table)
+
+
 def main():
     cli()
 

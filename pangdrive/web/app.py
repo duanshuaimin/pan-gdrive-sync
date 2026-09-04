@@ -339,4 +339,99 @@ def create_app() -> Flask:
         task_mgr.clear_completed()
         return jsonify({"ok": True})
 
+    # ==========================================
+    # Persistent Sync Jobs & Schedule APIs
+    # ==========================================
+
+    @app.route("/api/jobs", methods=["GET"])
+    def list_jobs():
+        status = request.args.get("status")
+        jobs = task_mgr.list_jobs(status=status)
+        return jsonify({"ok": True, "jobs": jobs})
+
+    @app.route("/api/jobs", methods=["POST"])
+    def create_job():
+        data = request.json or {}
+        name = data.get("name", "").strip()
+        source = data.get("source", "").strip()
+        dest = data.get("dest", "").strip()
+        mode = data.get("mode", "sync").lower()
+        skip_existing = bool(data.get("skip_existing", True))
+        recursive = bool(data.get("recursive", True))
+        interval_seconds = int(data.get("interval_seconds", 0))
+
+        if not name:
+            return jsonify({"ok": False, "error": "任务名称不能为空"}), 400
+        if not source or not dest:
+            return jsonify({"ok": False, "error": "源地址与目的地址均不能为空"}), 400
+
+        try:
+            split_storage_uri(source)
+            split_storage_uri(dest)
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"URI 格式错误: {e}"}), 400
+
+        job = task_mgr.create_job(
+            name=name,
+            source=source,
+            dest=dest,
+            mode=mode,
+            skip_existing=skip_existing,
+            recursive=recursive,
+            interval_seconds=interval_seconds,
+        )
+        return jsonify({"ok": True, "job": job})
+
+    @app.route("/api/jobs/<job_id>", methods=["GET"])
+    def get_job(job_id: str):
+        job = task_mgr.get_job(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "任务不存在"}), 404
+        return jsonify({"ok": True, "job": job})
+
+    @app.route("/api/jobs/<job_id>", methods=["PUT"])
+    def update_job(job_id: str):
+        data = request.json or {}
+        job = task_mgr.update_job(job_id, **data)
+        if not job:
+            return jsonify({"ok": False, "error": "任务不存在或更新失败"}), 404
+        return jsonify({"ok": True, "job": job})
+
+    @app.route("/api/jobs/<job_id>", methods=["DELETE"])
+    def delete_job(job_id: str):
+        success = task_mgr.delete_job(job_id)
+        return jsonify({"ok": success})
+
+    @app.route("/api/jobs/<job_id>/run", methods=["POST"])
+    def run_job(job_id: str):
+        task = task_mgr.trigger_job(job_id)
+        if not task:
+            return jsonify({"ok": False, "error": "任务不存在"}), 404
+        return jsonify({"ok": True, "task": task.to_dict()})
+
+    @app.route("/api/jobs/<job_id>/toggle", methods=["POST"])
+    def toggle_job(job_id: str):
+        job = task_mgr.toggle_job(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "任务不存在"}), 404
+        return jsonify({"ok": True, "job": job})
+
+    # ==========================================
+    # History Query APIs
+    # ==========================================
+
+    @app.route("/api/history", methods=["GET"])
+    def get_history():
+        limit = int(request.args.get("limit", 100))
+        status = request.args.get("status")
+        job_id = request.args.get("job_id")
+        history = task_mgr.storage.list_tasks(limit=limit, status=status, job_id=job_id)
+        return jsonify({"ok": True, "history": history})
+
+    @app.route("/api/history/clear", methods=["POST"])
+    def clear_history():
+        task_mgr.storage.clear_tasks(only_finished=False)
+        task_mgr.clear_completed()
+        return jsonify({"ok": True})
+
     return app

@@ -339,10 +339,33 @@ async function confirmTransfer() {
   const dest = document.getElementById("transferDest").value.trim();
   const mode = document.getElementById("transferMode").value;
   const skipExisting = document.getElementById("transferSkipExisting").checked;
+  const saveAsJob = document.getElementById("transferSaveAsJob")?.checked;
+  const jobName = document.getElementById("transferJobName")?.value.trim() || `Sync: ${source} ➔ ${dest}`;
 
   if (!source || !dest) {
     showToast("源路径和目标路径均不可为空", "error");
     return;
+  }
+
+  // If saveAsJob is checked, save persistent sync job rule
+  if (saveAsJob) {
+    try {
+      await fetchAPI("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          name: jobName,
+          source,
+          dest,
+          mode,
+          skip_existing: skipExisting,
+          recursive: true,
+          interval_seconds: 0,
+        }),
+      });
+      showToast(`已成功保存持久化规则: ${jobName}`, "info");
+    } catch (err) {
+      console.error("Save job error:", err);
+    }
   }
 
   try {
@@ -665,6 +688,179 @@ function renderQuotaModal() {
   container.innerHTML = html;
 }
 
+// ==========================================
+// Persistent Sync Jobs Management
+// ==========================================
+async function loadJobs() {
+  try {
+    const res = await fetchAPI("/api/jobs");
+    if (res.ok) {
+      state.jobs = res.jobs || [];
+      renderJobsModal();
+    }
+  } catch (err) {
+    console.error("Load jobs error:", err);
+  }
+}
+
+function openJobsModal() {
+  openModal("jobsModal");
+  loadJobs();
+}
+
+function openNewJobModal() {
+  document.getElementById("newJobName").value = "";
+  document.getElementById("newJobSource").value = `baidu:${state.baidu.path}`;
+  document.getElementById("newJobDest").value = `gdrive:${state.gdrive.path}`;
+  document.getElementById("newJobMode").value = "sync";
+  document.getElementById("newJobInterval").value = "0";
+  document.getElementById("newJobSkipExisting").checked = true;
+  openModal("newJobModal");
+}
+
+async function saveNewJob() {
+  const name = document.getElementById("newJobName").value.trim();
+  const source = document.getElementById("newJobSource").value.trim();
+  const dest = document.getElementById("newJobDest").value.trim();
+  const mode = document.getElementById("newJobMode").value;
+  const intervalSeconds = parseInt(document.getElementById("newJobInterval").value, 10) || 0;
+  const skipExisting = document.getElementById("newJobSkipExisting").checked;
+
+  if (!name) {
+    showToast("请输入规则名称", "error");
+    return;
+  }
+  if (!source || !dest) {
+    showToast("源地址和目标地址均不可为空", "error");
+    return;
+  }
+
+  try {
+    const res = await fetchAPI("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        source,
+        dest,
+        mode,
+        skip_existing: skipExisting,
+        recursive: true,
+        interval_seconds: intervalSeconds,
+      }),
+    });
+
+    if (res.ok) {
+      showToast(`同步规则「${name}」已保存`, "success");
+      closeModal("newJobModal");
+      loadJobs();
+    } else {
+      showToast(`保存失败: ${res.error}`, "error");
+    }
+  } catch (err) {
+    showToast(`保存异常: ${err.message}`, "error");
+  }
+}
+
+async function runJob(jobId) {
+  try {
+    const res = await fetchAPI(`/api/jobs/${jobId}/run`, { method: "POST" });
+    if (res.ok) {
+      showToast("已启动任务执行", "success");
+      document.getElementById("taskDrawer").classList.remove("collapsed");
+      loadJobs();
+    } else {
+      showToast(`执行失败: ${res.error}`, "error");
+    }
+  } catch (err) {
+    showToast(`触发异常: ${err.message}`, "error");
+  }
+}
+
+async function toggleJob(jobId) {
+  try {
+    const res = await fetchAPI(`/api/jobs/${jobId}/toggle`, { method: "POST" });
+    if (res.ok) {
+      showToast(`规则状态已更新为: ${res.job.status === 'active' ? '活跃' : '暂停'}`, "info");
+      loadJobs();
+    }
+  } catch (err) {}
+}
+
+async function deleteJob(jobId) {
+  if (!confirm("确定要删除此持久化同步规则吗？")) return;
+  try {
+    const res = await fetchAPI(`/api/jobs/${jobId}`, { method: "DELETE" });
+    if (res.ok) {
+      showToast("已删除同步规则", "info");
+      loadJobs();
+    }
+  } catch (err) {}
+}
+
+function renderJobsModal() {
+  const container = document.getElementById("jobsModalBody");
+  if (!container) return;
+
+  if (!state.jobs || state.jobs.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; color: var(--text-muted); padding: 2rem 0; font-size: 0.9rem;">
+        暂未创建任何持久化同步规则<br>
+        <button class="btn btn-primary" style="margin-top: 0.75rem;" onclick="openNewJobModal()">+ 立即创建第一个同步计划</button>
+      </div>`;
+    return;
+  }
+
+  let html = `<div style="display: flex; flex-direction: column; gap: 0.75rem;">`;
+  state.jobs.forEach(j => {
+    let intervalStr = "仅手动执行";
+    if (j.interval_seconds > 0) {
+      if (j.interval_seconds < 3600) intervalStr = `每 ${Math.round(j.interval_seconds / 60)} 分钟`;
+      else if (j.interval_seconds < 86400) intervalStr = `每 ${Math.round(j.interval_seconds / 3600)} 小时`;
+      else intervalStr = `每天执行`;
+    }
+
+    const isActive = j.status === "active";
+    const statusBadge = isActive
+      ? `<span class="badge-gdrive">活跃中</span>`
+      : `<span class="badge-baidu" style="color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.15);">已暂停</span>`;
+
+    let lastStatusBadge = "-";
+    if (j.last_status === "completed") {
+      lastStatusBadge = `<span style="color: var(--accent-green);">上次成功</span>`;
+    } else if (j.last_status === "failed") {
+      lastStatusBadge = `<span style="color: var(--accent-red);">上次失败</span>`;
+    }
+
+    html += `
+      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <strong style="font-size: 0.95rem;">${escapeHtml(j.name)}</strong>
+            <span class="tag-mode ${j.mode === 'sync' ? 'tag-sync' : 'tag-copy'}">${j.mode.toUpperCase()}</span>
+            ${statusBadge}
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <button class="btn btn-primary" style="padding: 0.25rem 0.55rem; font-size: 0.75rem;" onclick="runJob('${j.id}')">▶ 立即执行</button>
+            <button class="btn btn-secondary" style="padding: 0.25rem 0.55rem; font-size: 0.75rem;" onclick="toggleJob('${j.id}')">${isActive ? '暂停' : '恢复'}</button>
+            <button class="btn btn-danger" style="padding: 0.25rem 0.55rem; font-size: 0.75rem;" onclick="deleteJob('${j.id}')">删除</button>
+          </div>
+        </div>
+
+        <div style="font-size: 0.825rem; color: var(--text-secondary); word-break: break-all;">
+          ${escapeHtml(j.source)} ➔ ${escapeHtml(j.dest)}
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid rgba(51, 65, 85, 0.4); padding-top: 0.4rem;">
+          <span>调度周期: <strong style="color: var(--text-secondary);">${intervalStr}</strong></span>
+          <span>状态: ${lastStatusBadge} ${j.last_run_at ? '(上次: ' + formatTimestamp(j.last_run_at) + ')' : ''}</span>
+        </div>
+      </div>
+    `;
+  });
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
 // Modal control
 function openModal(id) {
   document.getElementById(id).classList.add("open");
@@ -681,5 +877,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   await loadStatus();
   loadFiles("baidu");
   loadFiles("gdrive");
+  loadJobs();
   initTaskStream();
 });
