@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .config import CONFIG_DIR
+from .paths import migrate_legacy_artifacts, tasks_db_path
+
 
 class Storage:
     _instance = None
@@ -20,13 +23,17 @@ class Storage:
                 cls._instance = Storage(db_path=db_path)
             return cls._instance
 
+    @classmethod
+    def reset_instance_for_tests(cls):
+        with cls._lock:
+            cls._instance = None
+
     def __init__(self, db_path: Optional[str] = None):
         if db_path:
             self.db_path = db_path
         else:
-            cfg_dir = os.path.expanduser("~/.config/pangdrive")
-            os.makedirs(cfg_dir, exist_ok=True)
-            self.db_path = os.path.join(cfg_dir, "tasks.db")
+            migrate_legacy_artifacts()
+            self.db_path = str(tasks_db_path())
 
         self._local = threading.local()
         self._init_db()

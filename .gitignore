@@ -44,3 +44,6 @@ token.json
 /tmp/
 *.part
 *.log
+
+# SDD scratch
+.superpowers/
