@@ -41,10 +41,12 @@ function showToast(msg, type = "info") {
 // ==========================================
 async function fetchAPI(url, options = {}) {
   try {
-    const res = await fetch(url, {
+    const opts = {
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       ...options,
-    });
+    };
+    const res = await fetch(url, opts);
     const data = await res.json();
     return data;
   } catch (err) {

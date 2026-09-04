@@ -49,6 +49,10 @@ class Config:
                 "max_retries": 3,
                 "conflict_policy": "overwrite",  # 'overwrite', 'skip', or 'newer'
             },
+            "web": {
+                "username": "",
+                "password_hash": "",
+            },
         }
         self.load()
 
@@ -153,6 +157,18 @@ class Config:
         if client_secret:
             self.data["gdrive"]["client_secret"] = client_secret.strip()
         self.save()
+
+    def set_web_auth(self, username: str, password: str) -> None:
+        from werkzeug.security import generate_password_hash
+
+        self.data.setdefault("web", {})
+        self.data["web"]["username"] = username.strip()
+        self.data["web"]["password_hash"] = generate_password_hash(password)
+        self.save()
+
+    def has_web_auth(self) -> bool:
+        web = self.data.get("web") or {}
+        return bool(web.get("username") and web.get("password_hash"))
 
 
 config = Config()

@@ -1,9 +1,11 @@
 """Test suite for pan-gdrive-sync."""
 
+import base64
 import io
 import sys
 import unittest
 from pathlib import Path
+from werkzeug.security import generate_password_hash
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -15,6 +17,21 @@ from pangdrive.utils import format_size, guess_mime_type, normalize_path, split_
 
 
 class TestPanGDriveSync(unittest.TestCase):
+    def setUp(self):
+        self._original_web_config = config.data.get("web")
+        config.data["web"] = {
+            "username": "test",
+            "password_hash": generate_password_hash("secret"),
+        }
+        token = base64.b64encode(b"test:secret").decode()
+        self.api_headers = {"Authorization": f"Basic {token}"}
+
+    def tearDown(self):
+        if self._original_web_config is None:
+            config.data.pop("web", None)
+        else:
+            config.data["web"] = self._original_web_config
+
     def test_01_utils(self):
         self.assertEqual(format_size(1024), "1.0 KB")
         self.assertEqual(format_size(1024 * 1024 * 5), "5.0 MB")
@@ -97,7 +114,7 @@ class TestPanGDriveSync(unittest.TestCase):
         self.assertEqual(res_js.status_code, 200)
 
         # 3. Test /api/status
-        res_status = client.get("/api/status")
+        res_status = client.get("/api/status", headers=self.api_headers)
         self.assertEqual(res_status.status_code, 200)
         status_data = res_status.get_json()
         self.assertIn("baidu", status_data)
@@ -105,14 +122,16 @@ class TestPanGDriveSync(unittest.TestCase):
         self.assertTrue(status_data["baidu"]["authenticated"])
 
         # 4. Test /api/files listing for baidu
-        res_files = client.get("/api/files?drive=baidu&path=/")
+        res_files = client.get(
+            "/api/files?drive=baidu&path=/", headers=self.api_headers
+        )
         self.assertEqual(res_files.status_code, 200)
         files_data = res_files.get_json()
         self.assertTrue(files_data["ok"])
         self.assertIsInstance(files_data["items"], list)
 
         # 5. Test /api/tasks
-        res_tasks = client.get("/api/tasks")
+        res_tasks = client.get("/api/tasks", headers=self.api_headers)
         self.assertEqual(res_tasks.status_code, 200)
         tasks_data = res_tasks.get_json()
         self.assertTrue(tasks_data["ok"])
@@ -193,36 +212,44 @@ class TestPanGDriveSync(unittest.TestCase):
             client = app.test_client()
 
             # Create job via API
-            res = client.post("/api/jobs", json={
-                "name": "API测试规则",
-                "source": "baidu:/Docs",
-                "dest": "gdrive:/BackupDocs",
-                "mode": "sync",
-                "interval_seconds": 1800,
-            })
+            res = client.post(
+                "/api/jobs",
+                json={
+                    "name": "API测试规则",
+                    "source": "baidu:/Docs",
+                    "dest": "gdrive:/BackupDocs",
+                    "mode": "sync",
+                    "interval_seconds": 1800,
+                },
+                headers=self.api_headers,
+            )
             self.assertEqual(res.status_code, 200)
             data = res.get_json()
             self.assertTrue(data["ok"])
             created_id = data["job"]["id"]
 
             # Query jobs via API
-            res_get = client.get("/api/jobs")
+            res_get = client.get("/api/jobs", headers=self.api_headers)
             self.assertEqual(res_get.status_code, 200)
             job_ids = [j["id"] for j in res_get.get_json()["jobs"]]
             self.assertIn(created_id, job_ids)
 
             # Toggle job via API
-            res_toggle = client.post(f"/api/jobs/{created_id}/toggle")
+            res_toggle = client.post(
+                f"/api/jobs/{created_id}/toggle", headers=self.api_headers
+            )
             self.assertEqual(res_toggle.status_code, 200)
             self.assertEqual(res_toggle.get_json()["job"]["status"], "paused")
 
             # Query history via API
-            res_hist = client.get("/api/history")
+            res_hist = client.get("/api/history", headers=self.api_headers)
             self.assertEqual(res_hist.status_code, 200)
             self.assertTrue(res_hist.get_json()["ok"])
 
             # Delete job via API
-            res_del = client.delete(f"/api/jobs/{created_id}")
+            res_del = client.delete(
+                f"/api/jobs/{created_id}", headers=self.api_headers
+            )
             self.assertEqual(res_del.status_code, 200)
             self.assertTrue(res_del.get_json()["ok"])
 

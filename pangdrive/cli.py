@@ -99,6 +99,18 @@ def auth_gdrive_cmd(service_account, token, refresh_token, client_id, client_sec
             console.print(f"[bold yellow]Google Drive verification notice:[/bold yellow] {e}")
 
 
+@auth_group.command("web")
+@click.option("--username", "-u", prompt=True)
+@click.option("--password", "-p", prompt=True, hide_input=True, confirmation_prompt=True)
+def auth_web_cmd(username, password):
+    """Set HTTP Basic Auth credentials for the Web UI."""
+    if not username or not password:
+        console.print("[bold red]Username and password are required.[/bold red]")
+        sys.exit(1)
+    config.set_web_auth(username, password)
+    console.print("[bold green]✓ Web UI Basic Auth credentials saved.[/bold green]")
+
+
 @cli.command("status")
 def status_cmd():
     """Display connection status and quota for both Baidu Netdisk and Google Drive."""
@@ -299,6 +311,13 @@ def sync_cmd(src_uri, dst_uri, overwrite, no_recursive):
 @click.option("--debug", is_flag=True, help="Run Flask in debug mode")
 def web_cmd(host, port, debug):
     """Launch the modern Web UI dashboard for pan-gdrive-sync."""
+    if not config.has_web_auth():
+        console.print("[bold red]Web auth not configured.[/bold red] Run: pan-gdrive-sync auth web")
+        sys.exit(1)
+    if debug and host not in ("127.0.0.1", "localhost", "::1"):
+        console.print("[bold red]Refusing --debug on non-loopback bind.[/bold red]")
+        sys.exit(1)
+
     from .web import create_app
 
     app = create_app()

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from werkzeug.security import check_password_hash
 
 from ..baidu_client import BaiduClient
 from ..config import config
@@ -37,6 +38,29 @@ def create_app() -> Flask:
     app.config["JSON_AS_ASCII"] = False
 
     task_mgr = TaskManager.get_instance()
+
+    @app.before_request
+    def require_basic_auth():
+        if not request.path.startswith("/api/"):
+            return None
+        auth = request.authorization
+        web = config.data.get("web") or {}
+        username = web.get("username") or ""
+        password_hash = web.get("password_hash") or ""
+        if not username or not password_hash:
+            return jsonify({"ok": False, "error": "Web auth not configured"}), 503
+        if (
+            auth
+            and auth.username == username
+            and auth.password
+            and check_password_hash(password_hash, auth.password)
+        ):
+            return None
+        return Response(
+            "Unauthorized",
+            401,
+            {"WWW-Authenticate": 'Basic realm="pan-gdrive-sync"'},
+        )
 
     @app.route("/")
     def index():

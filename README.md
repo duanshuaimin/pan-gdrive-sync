@@ -171,6 +171,9 @@ pan-gdrive-sync history --limit 20
 
 ### 1. 启动 Web 界面
 ```bash
+# 首次启动前，设置 Web UI 的 HTTP Basic Auth 用户名和密码
+pan-gdrive-sync auth web
+
 # 默认启动并监听 http://127.0.0.1:8080
 pan-gdrive-sync web
 
@@ -179,6 +182,10 @@ pan-gdrive-sync web --host 0.0.0.0 --port 8080
 # 或使用快捷命令
 pgsync web -h 0.0.0.0 -p 8080
 ```
+Web API (`/api/*`) requires the configured HTTP Basic Auth credentials. When
+binding to a non-local address, use HTTPS through a reverse proxy: HTTP Basic
+Auth must not be sent over unencrypted HTTP. `--debug` is refused on
+non-loopback binds.
 
 ### 2. Web 界面功能亮点
 - 🖥️ **双栏网盘文件浏览器 (Dual-Pane File Explorer)**：
