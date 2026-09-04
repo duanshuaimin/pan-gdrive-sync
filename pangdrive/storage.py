@@ -26,6 +26,11 @@ class Storage:
     @classmethod
     def reset_instance_for_tests(cls):
         with cls._lock:
+            if cls._instance is not None:
+                conn = getattr(cls._instance._local, "conn", None)
+                if conn is not None:
+                    conn.close()
+                    cls._instance._local.conn = None
             cls._instance = None
 
     def __init__(self, db_path: Optional[str] = None):

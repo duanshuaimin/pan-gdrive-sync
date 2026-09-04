@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -45,6 +46,17 @@ class TestPathsAndStorage(unittest.TestCase):
                 Storage.reset_instance_for_tests()
                 s = Storage.get_instance()
                 self.assertEqual(Path(s.db_path), cfg / "tasks.db")
+
+    def test_storage_reset_closes_singleton_connection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Storage.reset_instance_for_tests()
+            storage = Storage.get_instance(db_path=str(Path(tmp) / "tasks.db"))
+            connection = storage._get_connection()
+
+            Storage.reset_instance_for_tests()
+
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
 
 
 class TestWebBasicAuth(unittest.TestCase):
@@ -231,6 +243,27 @@ class TestWebBasicAuth(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(cfg.data["gdrive"]["service_account_file"], str(expected_path))
         chmod.assert_any_call(expected_path, 0o600)
+
+
+class TestCliSchedulingHelp(unittest.TestCase):
+    def test_job_add_interval_help_explains_web_scheduler_requirement(self):
+        from click.testing import CliRunner
+        from pangdrive.cli import cli
+
+        result = CliRunner().invoke(cli, ["job", "add", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertRegex(
+            result.output,
+            r"only while the web\s+server is running",
+        )
+
+
+class TestTaskManagerIsolation(unittest.TestCase):
+    def test_task_manager_exposes_test_reset_helper(self):
+        from pangdrive.web.task_manager import TaskManager
+
+        self.assertTrue(hasattr(TaskManager, "reset_instance_for_tests"))
 
 
 class TestEscapeHtml(unittest.TestCase):

@@ -93,6 +93,10 @@ pan-gdrive-sync status
 ```
 终端将以表格形式展示百度网盘与 Google Drive 的连接状态、账户名、VIP 等级及存储空间使用情况。
 
+### 4. 配置文件位置
+配置和任务数据库保存在 `~/.config/pan-gdrive-sync/`。旧版本位于
+`~/.config/pangdrive/` 的配置会在首次运行时自动迁移，原文件会保留。
+
 ---
 
 ## 📖 使用指南 (Usage Examples)
@@ -155,6 +159,7 @@ pan-gdrive-sync job toggle job_1788521964_2ec45b
 # 删除持久化任务规则
 pan-gdrive-sync job delete job_1788521964_2ec45b
 ```
+定时任务仅在 `pan-gdrive-sync web` 进程运行期间由内置调度器触发；仅 CLI 不会执行 interval。
 
 ### 6. 查看持久化历史传输记录 (`history`)
 所有单次传输与定时同步任务的执行状态、传输耗时、错误日志均持久化记录在本地 SQLite 数据库中，即便服务重启也不丢失：
@@ -205,9 +210,14 @@ non-loopback binds.
 
 ## 🧪 自动化测试验证 (Testing)
 
-运行端到端自动化测试套件：
+默认测试套件只运行本地单元测试：
 ```bash
-python3 tests/test_sync.py
+python3 -m unittest discover -s tests -v
+```
+需要访问真实百度网盘或 Web 环境的集成测试仅在显式设置
+`PGSYNC_INTEGRATION=1` 时运行：
+```bash
+PGSYNC_INTEGRATION=1 python3 -m unittest tests.test_sync -v
 ```
 
 ---

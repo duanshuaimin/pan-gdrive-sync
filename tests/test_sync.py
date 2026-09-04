@@ -2,7 +2,9 @@
 
 import base64
 import io
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from werkzeug.security import generate_password_hash
@@ -12,12 +14,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pangdrive.baidu_client import BaiduClient
 from pangdrive.config import config
 from pangdrive.gdrive_client import GoogleDriveClient
+from pangdrive.storage import Storage
 from pangdrive.transfer import ProgressStreamWrapper, TransferDirection, TransferEngine
 from pangdrive.utils import format_size, guess_mime_type, normalize_path, split_storage_uri
 
 
+def integration(fn):
+    return unittest.skipUnless(
+        os.environ.get("PGSYNC_INTEGRATION") == "1",
+        "Set PGSYNC_INTEGRATION=1 for live cloud tests",
+    )(fn)
+
+
 class TestPanGDriveSync(unittest.TestCase):
     def setUp(self):
+        from pangdrive.web.task_manager import TaskManager
+
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._temp_db = str(Path(self._temp_dir.name) / "tasks.db")
+        TaskManager.reset_instance_for_tests()
+        Storage.reset_instance_for_tests()
+        self.storage = Storage.get_instance(db_path=self._temp_db)
         self._original_web_config = config.data.get("web")
         config.data["web"] = {
             "username": "test",
@@ -31,6 +48,11 @@ class TestPanGDriveSync(unittest.TestCase):
             config.data.pop("web", None)
         else:
             config.data["web"] = self._original_web_config
+        from pangdrive.web.task_manager import TaskManager
+
+        TaskManager.reset_instance_for_tests()
+        Storage.reset_instance_for_tests()
+        self._temp_dir.cleanup()
 
     def test_01_utils(self):
         self.assertEqual(format_size(1024), "1.0 KB")
@@ -56,6 +78,7 @@ class TestPanGDriveSync(unittest.TestCase):
         self.assertEqual(guess_mime_type("test.pdf"), "application/pdf")
         print("Test 01 passed: Utils validation")
 
+    @integration
     def test_02_baidu_live_connection(self):
         baidu = BaiduClient()
         self.assertTrue(baidu.is_authenticated())
@@ -95,6 +118,7 @@ class TestPanGDriveSync(unittest.TestCase):
         self.assertEqual(gdrive._path_cache["/"], "root")
         print("Test 04 passed: Google Drive client initialized properly")
 
+    @integration
     def test_05_web_endpoints(self):
         from pangdrive.web.app import create_app
         from pangdrive.web.task_manager import TaskManager

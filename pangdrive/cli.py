@@ -410,7 +410,13 @@ def job_list_cmd():
 @click.argument("src_uri")
 @click.argument("dst_uri")
 @click.option("--name", "-n", prompt="Job Name", help="Descriptive name for this sync job")
-@click.option("--interval", "-i", default=0, type=int, help="Auto-run interval in seconds (0 = manual only)")
+@click.option(
+    "--interval",
+    "-i",
+    default=0,
+    type=int,
+    help="Auto-run interval in seconds (only while the web server is running; 0 = manual only)",
+)
 @click.option("--overwrite/--skip", default=False, help="Overwrite or skip existing files")
 @click.option("--no-recursive", is_flag=True, help="Do not recurse into subdirectories")
 def job_add_cmd(src_uri, dst_uri, name, interval, overwrite, no_recursive):

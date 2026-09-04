@@ -127,6 +127,13 @@ class TaskManager:
                 cls._instance = TaskManager(db_path=db_path)
             return cls._instance
 
+    @classmethod
+    def reset_instance_for_tests(cls):
+        with cls._lock:
+            if cls._instance is not None:
+                cls._instance.stop_scheduler()
+            cls._instance = None
+
     def __init__(self, db_path: Optional[str] = None):
         self.storage = Storage.get_instance(db_path=db_path)
         self.tasks: Dict[str, Task] = {}
