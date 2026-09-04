@@ -431,6 +431,22 @@ class TestSkipBySize(unittest.TestCase):
         engine.baidu.meta.assert_called_once_with("/source/file.txt")
         engine.gdrive.upload_stream.assert_called_once()
 
+    def test_transfer_skip_meta_failure_still_copies(self):
+        engine = TransferEngine.__new__(TransferEngine)
+        engine.baidu = mock.MagicMock()
+        engine.gdrive = mock.MagicMock()
+        engine.baidu.meta.side_effect = RuntimeError("Baidu metadata unavailable")
+        response = mock.MagicMock()
+        response.raw = io.BytesIO(b"0123456789")
+        engine.baidu.download_stream.return_value = (response, 10, "")
+
+        result = engine.transfer_file(
+            "baidu", "/source/file.txt", "gdrive", "/dest/file.txt", ondup="skip"
+        )
+
+        self.assertEqual(result["status"], "success")
+        engine.gdrive.upload_stream.assert_called_once()
+
 
 class TestSyncDiskCacheAndHistory(unittest.TestCase):
     def test_sync_passes_disk_cache_to_each_file_transfer(self):

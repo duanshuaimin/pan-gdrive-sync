@@ -140,17 +140,22 @@ class TransferEngine:
                         params={"q": q, "fields": "files(id, size)"},
                     ).json()
                     files = res.get("files", [])
+                except Exception:
+                    pass
+                else:
                     if (
                         source_size is not None
                         and files
                         and files[0].get("size") is not None
-                        and int(files[0]["size"]) == int(source_size)
                     ):
-                        if progress and task_id is not None:
-                            progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
-                        return {"status": "skipped", "file": filename}
-                except (TypeError, ValueError):
-                    pass
+                        try:
+                            same_size = int(files[0]["size"]) == int(source_size)
+                        except (TypeError, ValueError):
+                            same_size = False
+                        if same_size:
+                            if progress and task_id is not None:
+                                progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
+                            return {"status": "skipped", "file": filename}
             else:
                 try:
                     parent_p = os.path.dirname(src_p) or "/"
@@ -166,18 +171,23 @@ class TransferEngine:
                     ).json().get("files", [])
                     source_size = source_files[0].get("size") if source_files else None
                     m = self.baidu.meta(dst_p)
+                except Exception:
+                    pass
+                else:
                     if (
                         source_size is not None
                         and m
                         and not m[0].get("isdir")
                         and m[0].get("size") is not None
-                        and int(m[0]["size"]) == int(source_size)
                     ):
-                        if progress and task_id is not None:
-                            progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
-                        return {"status": "skipped", "file": filename}
-                except (TypeError, ValueError):
-                    pass
+                        try:
+                            same_size = int(m[0]["size"]) == int(source_size)
+                        except (TypeError, ValueError):
+                            same_size = False
+                        if same_size:
+                            if progress and task_id is not None:
+                                progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
+                            return {"status": "skipped", "file": filename}
 
         # Execute Transfer
         if direction == TransferDirection.BAIDU_TO_GDRIVE:
