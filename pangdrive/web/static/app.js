@@ -27,7 +27,9 @@ function showToast(msg, type = "info") {
   const container = document.getElementById("toastContainer");
   const el = document.createElement("div");
   el.className = `toast ${type}`;
-  el.innerHTML = `<span>${msg}</span>`;
+  const text = document.createElement("span");
+  text.textContent = msg;
+  el.appendChild(text);
   container.appendChild(el);
   setTimeout(() => {
     el.style.opacity = "0";
@@ -178,75 +180,120 @@ function renderFileList(drive) {
   if (!container) return;
 
   if (dState.loading) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <svg class="animate-spin" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path></svg>
-        <span>正在读取目录内容...</span>
-      </div>`;
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-state";
+    emptyState.textContent = "正在读取目录内容...";
+    container.replaceChildren(emptyState);
     return;
   }
 
   const filterText = dState.filter.toLowerCase().trim();
   const filtered = dState.items.filter(it => !filterText || it.name.toLowerCase().includes(filterText));
-
   if (filtered.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <span>此目录下无文件或未匹配到筛选结果</span>
-      </div>`;
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-state";
+    emptyState.textContent = "此目录下无文件或未匹配到筛选结果";
+    container.replaceChildren(emptyState);
     return;
   }
 
-  let html = `
-    <table class="file-table">
-      <thead>
-        <tr>
-          <th style="width: 38px;">
-            <input type="checkbox" id="${drive}SelectAll" onchange="toggleSelectAll('${drive}', this.checked)" />
-          </th>
-          <th>文件名</th>
-          <th style="width: 100px;">大小</th>
-          <th style="width: 150px;">修改时间</th>
-          <th style="width: 80px; text-align: right;">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-  `;
-
-  filtered.forEach(item => {
-    const isSelected = dState.selected.has(item.path);
-    const icon = item.isdir
-      ? `<svg class="file-icon icon-folder" viewBox="0 0 24 24" fill="currentColor"><path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-1.5V9a3 3 0 0 0-3-3h-4.8l-1.6-1.6A3 3 0 0 0 7.5 3.5H4.5A3 3 0 0 0 1.5 6.5v11.5a3 3 0 0 0 3 3h15z"/></svg>`
-      : `<svg class="file-icon icon-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
-
-    const clickAction = item.isdir
-      ? `onclick="navigateTo('${drive}', '${escapeHtml(item.path)}')"`
-      : "";
-
-    html += `
-      <tr class="${isSelected ? "selected" : ""}">
-        <td>
-          <input type="checkbox" ${isSelected ? "checked" : ""} onchange="toggleSelectItem('${drive}', '${escapeHtml(item.path)}', this.checked)" />
-        </td>
-        <td>
-          <div class="file-name-cell" ${clickAction}>
-            ${icon}
-            <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-          </div>
-        </td>
-        <td>${item.size_str}</td>
-        <td>${item.mtime_str}</td>
-        <td style="text-align: right;">
-          <button class="btn btn-secondary btn-icon" title="传输此项" onclick="openTransferSingle('${drive}', '${escapeHtml(item.path)}', ${item.isdir})">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
-        </td>
-      </tr>
-    `;
+  const table = document.createElement("table");
+  table.className = "file-table";
+  const headerRow = table.createTHead().insertRow();
+  const selectAllHeader = document.createElement("th");
+  selectAllHeader.style.width = "38px";
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAll.id = `${drive}SelectAll`;
+  selectAll.dataset.action = "select-all";
+  selectAll.dataset.drive = drive;
+  selectAllHeader.appendChild(selectAll);
+  headerRow.appendChild(selectAllHeader);
+  [["文件名", ""], ["大小", "100px"], ["修改时间", "150px"], ["操作", "80px"]].forEach(([label, width]) => {
+    const header = document.createElement("th");
+    header.textContent = label;
+    if (width) header.style.width = width;
+    if (label === "操作") header.style.textAlign = "right";
+    headerRow.appendChild(header);
   });
 
-  html += `</tbody></table>`;
-  container.innerHTML = html;
+  filtered.forEach(item => {
+    const row = table.insertRow();
+    row.className = dState.selected.has(item.path) ? "selected" : "";
+    row.dataset.drive = drive;
+    row.dataset.path = item.path;
+    row.dataset.isdir = String(Boolean(item.isdir));
+
+    const selectItem = document.createElement("input");
+    selectItem.type = "checkbox";
+    selectItem.checked = dState.selected.has(item.path);
+    selectItem.dataset.action = "select-item";
+    row.insertCell().appendChild(selectItem);
+
+    const name = document.createElement("div");
+    name.className = "file-name-cell";
+    if (item.isdir) name.dataset.action = "navigate";
+    name.appendChild(createFileIcon(item.isdir));
+    const nameText = document.createElement("span");
+    nameText.title = item.name;
+    nameText.textContent = item.name;
+    name.appendChild(nameText);
+    row.insertCell().appendChild(name);
+    row.insertCell().textContent = item.size_str;
+    row.insertCell().textContent = item.mtime_str;
+
+    const actionCell = row.insertCell();
+    actionCell.style.textAlign = "right";
+    const transfer = document.createElement("button");
+    transfer.className = "btn btn-secondary btn-icon";
+    transfer.title = "传输此项";
+    transfer.dataset.action = "transfer";
+    transfer.textContent = "→";
+    actionCell.appendChild(transfer);
+  });
+
+  container.replaceChildren(table);
+  bindFileListEvents(container);
+}
+
+function createFileIcon(isDir) {
+  const ns = "http://www.w3.org/2000/svg";
+  const icon = document.createElementNS(ns, "svg");
+  icon.setAttribute("class", `file-icon ${isDir ? "icon-folder" : "icon-file"}`);
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("fill", isDir ? "currentColor" : "none");
+  icon.setAttribute("stroke", isDir ? "none" : "currentColor");
+  icon.setAttribute("stroke-width", "2");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", isDir
+    ? "M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-1.5V9a3 3 0 0 0-3-3h-4.8l-1.6-1.6A3 3 0 0 0 7.5 3.5H4.5A3 3 0 0 0 1.5 6.5v11.5a3 3 0 0 0 3 3h15z"
+    : "M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2 2V7.5L14.5 2z");
+  icon.appendChild(path);
+  return icon;
+}
+
+function bindFileListEvents(container) {
+  if (container.dataset.eventsBound) return;
+  container.dataset.eventsBound = "true";
+  container.addEventListener("change", event => {
+    const target = event.target;
+    if (target.dataset.action === "select-all") {
+      toggleSelectAll(target.dataset.drive, target.checked);
+    } else if (target.dataset.action === "select-item") {
+      const row = target.closest("tr[data-drive]");
+      toggleSelectItem(row.dataset.drive, row.dataset.path, target.checked);
+    }
+  });
+  container.addEventListener("click", event => {
+    const action = event.target.closest("[data-action]");
+    if (!action) return;
+    const row = action.closest("tr[data-drive]");
+    if (action.dataset.action === "navigate") {
+      navigateTo(row.dataset.drive, row.dataset.path);
+    } else if (action.dataset.action === "transfer") {
+      openTransferSingle(row.dataset.drive, row.dataset.path, row.dataset.isdir === "true");
+    }
+  });
 }
 
 function toggleSelectItem(drive, path, checked) {
@@ -279,7 +326,12 @@ function onSearchInput(drive, val) {
 
 function escapeHtml(str) {
   if (!str) return "";
-  return str.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
 }
 
 // ==========================================

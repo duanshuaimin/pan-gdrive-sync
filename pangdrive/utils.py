@@ -8,6 +8,20 @@ from pathlib import Path
 from typing import Union
 
 
+def escape_html(s: str) -> str:
+    """Escape text for safe insertion into HTML; mirrors app.js escapeHtml."""
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
 def format_size(num_bytes: Union[int, float]) -> str:
     """Format bytes into readable human format (KB, MB, GB, TB)."""
     if num_bytes is None:

@@ -8,6 +8,7 @@ from unittest import mock
 from pangdrive import paths
 from pangdrive.config import Config
 from pangdrive.storage import Storage
+from pangdrive.utils import escape_html
 
 
 class TestPathsAndStorage(unittest.TestCase):
@@ -126,3 +127,11 @@ class TestWebBasicAuth(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         cfg.set_web_auth.assert_called_once_with("admin", "secret")
+
+
+class TestEscapeHtml(unittest.TestCase):
+    def test_escapes_all_special(self):
+        self.assertEqual(
+            escape_html("<script>alert('x')</script>\"&"),
+            "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;&quot;&amp;",
+        )
