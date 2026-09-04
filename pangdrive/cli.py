@@ -51,18 +51,29 @@ def auth_baidu_cmd(bduss, stoken, cookies):
     if not bduss:
         bduss = click.prompt("Enter Baidu BDUSS", hide_input=True)
 
-    config.set_baidu(bduss=bduss, stoken=stoken, cookies=cookies or "")
-    baidu = BaiduClient(config)
-
-    with console.status("[bold cyan]Verifying Baidu Netdisk credentials..."):
-        try:
+    previous_baidu = dict(config.data.get("baidu", {}))
+    candidate_baidu = dict(previous_baidu)
+    candidate_baidu.update(
+        {"bduss": bduss, "stoken": stoken, "cookies": cookies or ""}
+    )
+    config.data["baidu"] = candidate_baidu
+    try:
+        baidu = BaiduClient(config)
+        with console.status("[bold cyan]Verifying Baidu Netdisk credentials..."):
             info = baidu.get_user_info()
-            uname = info.get("uname", "User")
-            uk = info.get("uk", 0)
-            config.set_baidu(bduss=bduss, username=uname, uid=uk, stoken=stoken, cookies=cookies or "")
-            console.print(f"[bold green]✓ Baidu Netdisk authenticated successfully![/bold green] User: [bold cyan]{uname}[/bold cyan] (UK: {uk})")
-        except Exception as e:
-            console.print(f"[bold red]Baidu Netdisk authentication error:[/bold red] {e}")
+        uname = info.get("uname", "User")
+        uk = info.get("uk", 0)
+        config.set_baidu(
+            bduss=bduss,
+            username=uname,
+            uid=uk,
+            stoken=stoken,
+            cookies=cookies or "",
+        )
+        console.print(f"[bold green]✓ Baidu Netdisk authenticated successfully![/bold green] User: [bold cyan]{uname}[/bold cyan] (UK: {uk})")
+    except Exception as e:
+        config.data["baidu"] = previous_baidu
+        console.print(f"[bold red]Baidu Netdisk authentication error:[/bold red] {e}")
 
 
 @auth_group.command("gdrive")

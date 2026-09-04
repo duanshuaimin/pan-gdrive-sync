@@ -14,6 +14,7 @@ from werkzeug.security import check_password_hash
 from ..baidu_client import BaiduClient
 from ..config import config
 from ..gdrive_client import GoogleDriveClient
+from ..paths import service_account_path
 from ..utils import format_size, normalize_path, split_storage_uri
 from .task_manager import TaskManager
 
@@ -110,7 +111,7 @@ def create_app() -> Flask:
                 user = about.get("user", {})
                 res["gdrive"] = {
                     "authenticated": True,
-                    "type": config.data.get("gdrive", {}).get("auth_type", "service_account"),
+                    "type": config.data.get("gdrive", {}).get("auth_mode", "oauth2"),
                     "email": user.get("emailAddress", "Connected"),
                     "display_name": user.get("displayName", "Google Account"),
                     "quota": {
@@ -147,12 +148,23 @@ def create_app() -> Flask:
         if not bduss:
             return jsonify({"ok": False, "error": "未提供 BDUSS 或 Cookie 字符串"}), 400
 
-        config.set_baidu(bduss=bduss, stoken=stoken, cookies=cookies)
+        previous_baidu = dict(config.data.get("baidu", {}))
+        candidate_baidu = dict(previous_baidu)
+        candidate_baidu.update({"bduss": bduss, "stoken": stoken, "cookies": cookies})
+        config.data["baidu"] = candidate_baidu
         try:
             client = BaiduClient(config)
             info = client.get_user_info()
+            config.set_baidu(
+                bduss=bduss,
+                stoken=stoken,
+                cookies=cookies,
+                username=info.get("uname", ""),
+                uid=info.get("uk", 0),
+            )
             return jsonify({"ok": True, "user": info.get("uname", "Baidu User")})
         except Exception as e:
+            config.data["baidu"] = previous_baidu
             return jsonify({"ok": False, "error": f"百度网盘验证失败: {e}"}), 400
 
     @app.route("/api/auth/gdrive", methods=["POST"])
@@ -172,12 +184,13 @@ def create_app() -> Flask:
                     return jsonify({"ok": False, "error": "无效的 Google 服务账号 JSON 格式 (缺少 client_email 或 private_key)"}), 400
 
                 # Save file to config directory
-                key_path = os.path.expanduser("~/.config/pangdrive/service_account.json")
-                os.makedirs(os.path.dirname(key_path), exist_ok=True)
+                key_path = service_account_path()
+                key_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(key_path, "w", encoding="utf-8") as f:
                     f.write(json_raw)
+                os.chmod(key_path, 0o600)
 
-                config.set_gdrive_service_account(key_path)
+                config.set_gdrive_service_account(str(key_path))
 
             elif auth_type == "token":
                 token = data.get("token", "").strip()

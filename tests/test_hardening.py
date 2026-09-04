@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import tempfile
 import threading
@@ -129,6 +130,106 @@ class TestWebBasicAuth(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         cfg.set_web_auth.assert_called_once_with("admin", "secret")
+
+    def test_status_uses_auth_mode(self):
+        from pangdrive.web.app import create_app
+
+        cfg = self._config_with_web_auth()
+        cfg.data["gdrive"]["auth_mode"] = "token"
+        gdrive = mock.MagicMock()
+        gdrive.is_authenticated.return_value = True
+        gdrive.get_about.return_value = {
+            "user": {"emailAddress": "user@example.test", "displayName": "User"},
+            "total": 1,
+            "used": 0,
+            "free": 1,
+            "percent": 0,
+        }
+        baidu = mock.MagicMock()
+        baidu.is_authenticated.return_value = False
+        token = base64.b64encode(b"admin:secret").decode()
+
+        with mock.patch("pangdrive.web.app.config", cfg), mock.patch(
+            "pangdrive.web.app.TaskManager.get_instance", return_value=mock.MagicMock()
+        ), mock.patch("pangdrive.web.app.BaiduClient", return_value=baidu), mock.patch(
+            "pangdrive.web.app.GoogleDriveClient", return_value=gdrive
+        ):
+            response = create_app().test_client().get(
+                "/api/status", headers={"Authorization": f"Basic {token}"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["gdrive"]["type"], "token")
+
+    def test_baidu_web_auth_restores_credentials_on_verify_failure(self):
+        from pangdrive.web.app import create_app
+
+        cfg = self._config_with_web_auth()
+        cfg.data["baidu"] = {"bduss": "previous", "stoken": "old"}
+        baidu = mock.MagicMock()
+        baidu.get_user_info.side_effect = RuntimeError("invalid BDUSS")
+        token = base64.b64encode(b"admin:secret").decode()
+
+        with mock.patch("pangdrive.web.app.config", cfg), mock.patch(
+            "pangdrive.web.app.TaskManager.get_instance", return_value=mock.MagicMock()
+        ), mock.patch("pangdrive.web.app.BaiduClient", return_value=baidu):
+            response = create_app().test_client().post(
+                "/api/auth/baidu",
+                json={"bduss": "invalid", "stoken": "new"},
+                headers={"Authorization": f"Basic {token}"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(cfg.data["baidu"], {"bduss": "previous", "stoken": "old"})
+
+    def test_baidu_cli_auth_does_not_persist_on_verify_failure(self):
+        from click.testing import CliRunner
+        from pangdrive.cli import cli
+
+        cfg = mock.MagicMock()
+        cfg.data = {"baidu": {"bduss": "previous", "stoken": "old"}}
+        baidu = mock.MagicMock()
+        baidu.get_user_info.side_effect = RuntimeError("invalid BDUSS")
+
+        with mock.patch("pangdrive.cli.config", cfg), mock.patch(
+            "pangdrive.cli.BaiduClient", return_value=baidu
+        ):
+            result = CliRunner().invoke(cli, ["auth", "baidu", "--bduss", "invalid"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(cfg.data["baidu"], {"bduss": "previous", "stoken": "old"})
+        cfg.set_baidu.assert_not_called()
+
+    def test_web_service_account_uses_central_path_and_restrictive_mode(self):
+        import pangdrive.web.app as web_app
+
+        cfg = self._config_with_web_auth()
+        expected_path = Path(tempfile.mkdtemp()) / "service_account.json"
+        gdrive = mock.MagicMock()
+        gdrive.get_about.return_value = {"user": {"emailAddress": "sa@example.test"}}
+        token = base64.b64encode(b"admin:secret").decode()
+
+        with mock.patch.object(web_app, "config", cfg), mock.patch.object(
+            web_app.TaskManager, "get_instance", return_value=mock.MagicMock()
+        ), mock.patch.object(
+            web_app, "GoogleDriveClient", return_value=gdrive
+        ), mock.patch.object(
+            web_app, "service_account_path", create=True, return_value=expected_path
+        ), mock.patch.object(web_app.os, "chmod") as chmod:
+            response = web_app.create_app().test_client().post(
+                "/api/auth/gdrive",
+                json={
+                    "auth_type": "service_account",
+                    "service_account_json": json.dumps(
+                        {"client_email": "sa@example.test", "private_key": "private"}
+                    ),
+                },
+                headers={"Authorization": f"Basic {token}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(cfg.data["gdrive"]["service_account_file"], str(expected_path))
+        chmod.assert_any_call(expected_path, 0o600)
 
 
 class TestEscapeHtml(unittest.TestCase):
