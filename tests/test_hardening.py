@@ -1,6 +1,7 @@
 import base64
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -8,6 +9,7 @@ from unittest import mock
 from pangdrive import paths
 from pangdrive.config import Config
 from pangdrive.storage import Storage
+from pangdrive.transfer import TransferCancelledError, TransferEngine
 from pangdrive.utils import escape_html
 
 
@@ -135,3 +137,71 @@ class TestEscapeHtml(unittest.TestCase):
             escape_html("<script>alert('x')</script>\"&"),
             "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;&quot;&amp;",
         )
+
+
+class TestDiskCacheCleanup(unittest.TestCase):
+    def test_baidu_to_gdrive_cancel_during_disk_cache_download_removes_tmp(self):
+        engine = TransferEngine.__new__(TransferEngine)
+        engine.baidu = mock.MagicMock()
+        engine.gdrive = mock.MagicMock()
+        cancel = threading.Event()
+        created = []
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        class FakeResponse:
+            def iter_content(self, chunk_size=65536):
+                yield b"abc"
+                cancel.set()
+                yield b"def"
+
+        def create_tmp(*args, **kwargs):
+            tmp_file = real_named_temporary_file(*args, **kwargs)
+            created.append(tmp_file.name)
+            return tmp_file
+
+        engine.baidu.download_stream.return_value = (FakeResponse(), 6, "md5")
+
+        with mock.patch("pangdrive.transfer.tempfile.NamedTemporaryFile", create_tmp):
+            with self.assertRaises(TransferCancelledError):
+                engine.transfer_file(
+                    "baidu", "/source.bin", "gdrive", "/target.bin",
+                    use_disk_cache=True, cancel_event=cancel,
+                )
+
+        self.assertEqual(len(created), 1)
+        self.assertFalse(os.path.exists(created[0]))
+
+    def test_gdrive_to_baidu_cancel_during_disk_cache_download_removes_tmp(self):
+        engine = TransferEngine.__new__(TransferEngine)
+        engine.baidu = mock.MagicMock()
+        engine.gdrive = mock.MagicMock()
+        cancel = threading.Event()
+        created = []
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        class FakeResponse:
+            def iter_content(self, chunk_size=65536):
+                yield b"abc"
+                cancel.set()
+                yield b"def"
+
+        def create_tmp(*args, **kwargs):
+            tmp_file = real_named_temporary_file(*args, **kwargs)
+            created.append(tmp_file.name)
+            return tmp_file
+
+        engine.gdrive.resolve_path.return_value = "parent-id"
+        engine.gdrive.session.get.return_value.json.return_value = {
+            "files": [{"id": "file-id"}]
+        }
+        engine.gdrive.download_stream.return_value = (FakeResponse(), 6, "md5")
+
+        with mock.patch("pangdrive.transfer.tempfile.NamedTemporaryFile", create_tmp):
+            with self.assertRaises(TransferCancelledError):
+                engine.transfer_file(
+                    "gdrive", "/source.bin", "baidu", "/target.bin",
+                    use_disk_cache=True, cancel_event=cancel,
+                )
+
+        self.assertEqual(len(created), 1)
+        self.assertFalse(os.path.exists(created[0]))

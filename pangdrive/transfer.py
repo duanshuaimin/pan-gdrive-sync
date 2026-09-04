@@ -154,18 +154,19 @@ class TransferEngine:
 
             if use_disk_cache:
                 # Cache to temporary file on disk first
-                with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
-                    for chunk in resp.iter_content(chunk_size=65536):
-                        if cancel_event and cancel_event.is_set():
-                            raise TransferCancelledError("Transfer cancelled by user")
-                        if chunk:
-                            tmp_f.write(chunk)
-                            if progress and task_id is not None:
-                                progress.update(task_id, advance=len(chunk))
-                            if callback:
-                                callback(len(chunk), tmp_f.tell(), total_size)
-                    tmp_path = tmp_f.name
+                tmp_path = None
                 try:
+                    with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
+                        tmp_path = tmp_f.name
+                        for chunk in resp.iter_content(chunk_size=65536):
+                            if cancel_event and cancel_event.is_set():
+                                raise TransferCancelledError("Transfer cancelled by user")
+                            if chunk:
+                                tmp_f.write(chunk)
+                                if progress and task_id is not None:
+                                    progress.update(task_id, advance=len(chunk))
+                                if callback:
+                                    callback(len(chunk), tmp_f.tell(), total_size)
                     with open(tmp_path, "rb") as f_in:
                         res = self.gdrive.upload_stream(
                             f_in,
@@ -175,7 +176,7 @@ class TransferEngine:
                             ondup=ondup,
                         )
                 finally:
-                    if os.path.exists(tmp_path):
+                    if tmp_path and os.path.exists(tmp_path):
                         os.remove(tmp_path)
             else:
                 # Direct streaming pipe
@@ -219,22 +220,23 @@ class TransferEngine:
                 progress.update(task_id, total=total_size)
 
             if use_disk_cache:
-                with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
-                    for chunk in resp.iter_content(chunk_size=65536):
-                        if cancel_event and cancel_event.is_set():
-                            raise TransferCancelledError("Transfer cancelled by user")
-                        if chunk:
-                            tmp_f.write(chunk)
-                            if progress and task_id is not None:
-                                progress.update(task_id, advance=len(chunk))
-                            if callback:
-                                callback(len(chunk), tmp_f.tell(), total_size)
-                    tmp_path = tmp_f.name
+                tmp_path = None
                 try:
+                    with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
+                        tmp_path = tmp_f.name
+                        for chunk in resp.iter_content(chunk_size=65536):
+                            if cancel_event and cancel_event.is_set():
+                                raise TransferCancelledError("Transfer cancelled by user")
+                            if chunk:
+                                tmp_f.write(chunk)
+                                if progress and task_id is not None:
+                                    progress.update(task_id, advance=len(chunk))
+                                if callback:
+                                    callback(len(chunk), tmp_f.tell(), total_size)
                     with open(tmp_path, "rb") as f_in:
                         res = self.baidu.upload_stream(f_in, dst_p, size=total_size, ondup=ondup)
                 finally:
-                    if os.path.exists(tmp_path):
+                    if tmp_path and os.path.exists(tmp_path):
                         os.remove(tmp_path)
             else:
                 stream_wrapper = ProgressStreamWrapper(
