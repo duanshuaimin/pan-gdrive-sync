@@ -34,3 +34,18 @@ def migrate_legacy_artifacts() -> None:
             except OSError:
                 pass
         logger.info("Migrated %s -> %s", src, dst)
+
+    from .config import config
+
+    configured_path = config.data.get("gdrive", {}).get("service_account_file", "")
+    if configured_path:
+        try:
+            is_legacy_path = Path(configured_path).expanduser().resolve().is_relative_to(
+                LEGACY_CONFIG_DIR.resolve()
+            )
+        except (OSError, ValueError):
+            is_legacy_path = False
+        destination = service_account_path()
+        if is_legacy_path and destination.is_file():
+            config.data["gdrive"]["service_account_file"] = str(destination)
+            config.save()

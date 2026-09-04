@@ -74,6 +74,7 @@ def auth_baidu_cmd(bduss, stoken, cookies):
     except Exception as e:
         config.data["baidu"] = previous_baidu
         console.print(f"[bold red]Baidu Netdisk authentication error:[/bold red] {e}")
+        sys.exit(1)
 
 
 @auth_group.command("gdrive")

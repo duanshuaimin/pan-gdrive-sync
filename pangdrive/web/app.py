@@ -310,12 +310,15 @@ def create_app() -> Flask:
         data = request.json or {}
         source = data.get("source", "").strip()
         dest = data.get("dest", "").strip()
-        mode = data.get("mode", "copy").lower()  # "copy" or "sync"
+        mode = data.get("mode", "copy")
         skip_existing = bool(data.get("skip_existing", True))
         recursive = bool(data.get("recursive", True))
 
         if not source or not dest:
             return jsonify({"ok": False, "error": "源地址与目的地址不能为空"}), 400
+        if not isinstance(mode, str) or mode.lower() not in {"copy", "sync"}:
+            return jsonify({"ok": False, "error": "模式必须是 copy 或 sync"}), 400
+        mode = mode.lower()
 
         try:
             split_storage_uri(source)
@@ -392,7 +395,7 @@ def create_app() -> Flask:
         name = data.get("name", "").strip()
         source = data.get("source", "").strip()
         dest = data.get("dest", "").strip()
-        mode = data.get("mode", "sync").lower()
+        mode = data.get("mode", "sync")
         skip_existing = bool(data.get("skip_existing", True))
         recursive = bool(data.get("recursive", True))
         interval_seconds = int(data.get("interval_seconds", 0))
@@ -401,6 +404,9 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "任务名称不能为空"}), 400
         if not source or not dest:
             return jsonify({"ok": False, "error": "源地址与目的地址均不能为空"}), 400
+        if not isinstance(mode, str) or mode.lower() not in {"copy", "sync"}:
+            return jsonify({"ok": False, "error": "模式必须是 copy 或 sync"}), 400
+        mode = mode.lower()
 
         try:
             split_storage_uri(source)
@@ -429,6 +435,11 @@ def create_app() -> Flask:
     @app.route("/api/jobs/<job_id>", methods=["PUT"])
     def update_job(job_id: str):
         data = request.json or {}
+        if "mode" in data:
+            mode = data["mode"]
+            if not isinstance(mode, str) or mode.lower() not in {"copy", "sync"}:
+                return jsonify({"ok": False, "error": "模式必须是 copy 或 sync"}), 400
+            data["mode"] = mode.lower()
         job = task_mgr.update_job(job_id, **data)
         if not job:
             return jsonify({"ok": False, "error": "任务不存在或更新失败"}), 404

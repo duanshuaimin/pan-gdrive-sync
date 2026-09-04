@@ -368,7 +368,7 @@ class GoogleDriveClient:
                         return {"id": existing[0]["id"], "name": filename, "status": "skipped"}
                 except (TypeError, ValueError):
                     pass
-            elif ondup == "overwrite":
+            if ondup in ("skip", "overwrite"):
                 # Delete existing file before re-upload
                 for old in existing:
                     self.delete(file_id=old["id"])

@@ -123,6 +123,7 @@ class TransferEngine:
             raise ValueError(f"Unsupported transfer combination: {src_provider} -> {dst_provider}")
 
         # Check skip policy
+        upload_ondup = ondup
         if ondup == "skip":
             if direction == TransferDirection.BAIDU_TO_GDRIVE:
                 try:
@@ -156,6 +157,7 @@ class TransferEngine:
                             if progress and task_id is not None:
                                 progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
                             return {"status": "skipped", "file": filename}
+                        upload_ondup = "overwrite"
             else:
                 try:
                     parent_p = os.path.dirname(src_p) or "/"
@@ -188,6 +190,7 @@ class TransferEngine:
                             if progress and task_id is not None:
                                 progress.update(task_id, description=f"[yellow]Skipped (same size): {filename}")
                             return {"status": "skipped", "file": filename}
+                        upload_ondup = "overwrite"
 
         # Execute Transfer
         if direction == TransferDirection.BAIDU_TO_GDRIVE:
@@ -217,7 +220,7 @@ class TransferEngine:
                             dst_p,
                             size=total_size,
                             mime_type=guess_mime_type(filename),
-                            ondup=ondup,
+                            ondup=upload_ondup,
                         )
                 finally:
                     if tmp_path and os.path.exists(tmp_path):
@@ -237,7 +240,7 @@ class TransferEngine:
                     dst_p,
                     size=total_size,
                     mime_type=guess_mime_type(filename),
-                    ondup=ondup,
+                    ondup=upload_ondup,
                 )
 
             return {"status": "success", "direction": "baidu->gdrive", "result": res}
@@ -281,7 +284,7 @@ class TransferEngine:
                                 if callback:
                                     callback(len(chunk), tmp_f.tell(), total_size)
                     with open(tmp_path, "rb") as f_in:
-                        res = self.baidu.upload_stream(f_in, dst_p, size=total_size, ondup=ondup)
+                        res = self.baidu.upload_stream(f_in, dst_p, size=total_size, ondup=upload_ondup)
                 finally:
                     if tmp_path and os.path.exists(tmp_path):
                         os.remove(tmp_path)
@@ -294,7 +297,7 @@ class TransferEngine:
                     callback=callback,
                     cancel_event=cancel_event,
                 )
-                res = self.baidu.upload_stream(stream_wrapper, dst_p, size=total_size, ondup=ondup)
+                res = self.baidu.upload_stream(stream_wrapper, dst_p, size=total_size, ondup=upload_ondup)
 
             return {"status": "success", "direction": "gdrive->baidu", "result": res}
 

@@ -527,16 +527,16 @@ function renderTasks() {
       <div class="task-card">
         <div class="task-top">
           <div class="task-title">
-            <span class="tag-mode ${t.mode === 'sync' ? 'tag-sync' : 'tag-copy'}">${t.mode}</span>
+            <span class="tag-mode ${t.mode === 'sync' ? 'tag-sync' : 'tag-copy'}">${escapeHtml(t.mode)}</span>
             <span>${escapeHtml(t.source)} ➔ ${escapeHtml(t.dest)}</span>
           </div>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <span class="tag-mode ${statusClass}">${statusLabel}</span>
+            <span class="tag-mode ${escapeHtml(statusClass)}">${escapeHtml(statusLabel)}</span>
             ${cancelBtn}
           </div>
         </div>
         <div class="progress-bar-bg">
-          <div class="progress-bar-fill ${t.status}" style="width: ${t.percent}%;"></div>
+          <div class="progress-bar-fill ${escapeHtml(t.status)}" style="width: ${t.percent}%;"></div>
         </div>
         <div class="task-bottom">
           <span>${t.current_file ? '正在处理: ' + escapeHtml(t.current_file) : ''} (${t.transferred_bytes_str} / ${t.total_bytes_str})</span>
@@ -895,7 +895,7 @@ function renderJobsModal() {
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <strong style="font-size: 0.95rem;">${escapeHtml(j.name)}</strong>
-            <span class="tag-mode ${j.mode === 'sync' ? 'tag-sync' : 'tag-copy'}">${j.mode.toUpperCase()}</span>
+            <span class="tag-mode ${j.mode === 'sync' ? 'tag-sync' : 'tag-copy'}">${escapeHtml(j.mode.toUpperCase())}</span>
             ${statusBadge}
           </div>
           <div style="display: flex; align-items: center; gap: 0.4rem;">

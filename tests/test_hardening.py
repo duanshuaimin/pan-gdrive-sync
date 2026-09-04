@@ -36,6 +36,30 @@ class TestPathsAndStorage(unittest.TestCase):
                 self.assertEqual((new_root / "tasks.db").read_bytes(), b"sqlite-fake")
                 self.assertTrue(old_db.is_file())  # not deleted
 
+    def test_migrate_service_account_repoints_legacy_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            new_root = Path(tmp) / "pan-gdrive-sync"
+            old_root = Path(tmp) / "pangdrive"
+            new_root.mkdir()
+            old_root.mkdir()
+            old_service_account = old_root / "service_account.json"
+            old_service_account.write_text("{}", encoding="utf-8")
+            cfg = mock.MagicMock()
+            cfg.data = {
+                "gdrive": {"service_account_file": str(old_service_account)}
+            }
+            with mock.patch.object(paths, "CONFIG_DIR", new_root), mock.patch.object(
+                paths, "LEGACY_CONFIG_DIR", old_root
+            ), mock.patch("pangdrive.config.config", cfg):
+                paths.migrate_legacy_artifacts()
+
+            expected_path = new_root / "service_account.json"
+            self.assertTrue(expected_path.is_file())
+            self.assertEqual(
+                cfg.data["gdrive"]["service_account_file"], str(expected_path)
+            )
+            cfg.save.assert_called_once()
+
     def test_storage_default_db_under_config_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "pan-gdrive-sync"
@@ -102,7 +126,45 @@ class TestWebBasicAuth(unittest.TestCase):
             response = client.get(
                 "/api/status", headers={"Authorization": f"Basic {token}"}
             )
-            self.assertNotEqual(response.status_code, 401)
+            self.assertEqual(response.status_code, 200)
+
+    def test_transfer_and_job_apis_reject_invalid_mode(self):
+        from pangdrive.web.app import create_app
+
+        cfg = self._config_with_web_auth()
+        task_manager = mock.MagicMock()
+        token = base64.b64encode(b"admin:secret").decode()
+        headers = {"Authorization": f"Basic {token}"}
+        with mock.patch("pangdrive.web.app.config", cfg), mock.patch(
+            "pangdrive.web.app.TaskManager.get_instance", return_value=task_manager
+        ):
+            client = create_app().test_client()
+            for endpoint, payload in (
+                (
+                    "/api/transfer/start",
+                    {
+                        "source": "baidu:/source",
+                        "dest": "gdrive:/dest",
+                        "mode": "unexpected",
+                    },
+                ),
+                (
+                    "/api/jobs",
+                    {
+                        "name": "job",
+                        "source": "baidu:/source",
+                        "dest": "gdrive:/dest",
+                        "mode": "unexpected",
+                    },
+                ),
+                ("/api/jobs/job-id", {"mode": "unexpected"}),
+            ):
+                response = client.open(endpoint, method="PUT" if "job-id" in endpoint else "POST",
+                                       json=payload, headers=headers)
+                self.assertEqual(response.status_code, 400)
+        task_manager.create_task.assert_not_called()
+        task_manager.create_job.assert_not_called()
+        task_manager.update_job.assert_not_called()
 
     def test_web_cmd_requires_auth_config(self):
         from click.testing import CliRunner
@@ -209,7 +271,7 @@ class TestWebBasicAuth(unittest.TestCase):
         ):
             result = CliRunner().invoke(cli, ["auth", "baidu", "--bduss", "invalid"])
 
-        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.exit_code, 1, result.output)
         self.assertEqual(cfg.data["baidu"], {"bduss": "previous", "stoken": "old"})
         cfg.set_baidu.assert_not_called()
 
@@ -425,6 +487,7 @@ class TestSkipBySize(unittest.TestCase):
         client.session = mock.MagicMock()
         client.resolve_path = mock.MagicMock(return_value="parent-id")
         client._get_headers = mock.MagicMock(return_value={})
+        client.delete = mock.MagicMock()
         client._check = mock.MagicMock(
             side_effect=[
                 {"files": [{"id": "old-id", "size": "9"}]},
@@ -442,7 +505,52 @@ class TestSkipBySize(unittest.TestCase):
         )
 
         self.assertEqual(result, {"id": "new-id"})
+        client.delete.assert_called_once_with(file_id="old-id")
         client.session.post.assert_called_once()
+
+    def test_gdrive_upload_skip_returns_skipped_for_equal_size(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client.delete = mock.MagicMock()
+        client._check = mock.MagicMock(
+            return_value={"files": [{"id": "old-id", "size": "10"}]}
+        )
+
+        result = client.upload_stream(
+            io.BytesIO(b"0123456789"),
+            "/dest/file.txt",
+            size=10,
+            ondup="skip",
+        )
+
+        self.assertEqual(
+            result, {"id": "old-id", "name": "file.txt", "status": "skipped"}
+        )
+        client.delete.assert_not_called()
+        client.session.post.assert_not_called()
+
+    def test_baidu_upload_skip_replaces_size_mismatch(self):
+        from pangdrive.baidu_client import BaiduClient
+
+        client = BaiduClient.__new__(BaiduClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"baidu": {"app_id": "app-id"}}
+        client.session = mock.MagicMock()
+        client.meta = mock.MagicMock(return_value=[{"size": 9, "isdir": 0}])
+        client._check = mock.MagicMock(return_value={"path": "/dest/file.txt"})
+
+        client.upload_stream(
+            io.BytesIO(b"0123456789"),
+            "/dest/file.txt",
+            size=10,
+            ondup="skip",
+        )
+
+        self.assertIn("ondup=overwrite", client.session.post.call_args.args[0])
 
     def test_transfer_skip_checks_baidu_source_size_before_destination(self):
         engine = TransferEngine.__new__(TransferEngine)
@@ -463,6 +571,9 @@ class TestSkipBySize(unittest.TestCase):
 
         engine.baidu.meta.assert_called_once_with("/source/file.txt")
         engine.gdrive.upload_stream.assert_called_once()
+        self.assertEqual(
+            engine.gdrive.upload_stream.call_args.kwargs["ondup"], "overwrite"
+        )
 
     def test_transfer_skip_meta_failure_still_copies(self):
         engine = TransferEngine.__new__(TransferEngine)

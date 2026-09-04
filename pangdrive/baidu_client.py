@@ -213,6 +213,26 @@ class BaiduClient:
         if parent and parent != "/":
             self.mkdir(parent, parents=True)
 
+        if ondup == "skip":
+            try:
+                existing = self.meta(path)
+            except Exception:
+                existing = []
+            else:
+                if existing:
+                    try:
+                        if (
+                            size is not None
+                            and existing[0].get("size") is not None
+                            and int(existing[0]["size"]) == size
+                        ):
+                            return {"path": path, "status": "skipped"}
+                    except (TypeError, ValueError):
+                        pass
+            # Baidu PCS can create a duplicate "newcopy" for ondup=skip.  Once
+            # this call proceeds, overwrite makes the operation a replacement.
+            ondup = "overwrite"
+
         url = (
             f"{self.PCS_API}/file"
             f"?method=upload"
