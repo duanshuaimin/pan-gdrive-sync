@@ -293,6 +293,29 @@ def sync_cmd(src_uri, dst_uri, overwrite, no_recursive):
         sys.exit(1)
 
 
+@cli.command("web")
+@click.option("--host", "-h", default="127.0.0.1", help="Host IP to bind to (e.g. 0.0.0.0 or 127.0.0.1)")
+@click.option("--port", "-p", default=8080, type=int, help="Port to listen on (default: 8080)")
+@click.option("--debug", is_flag=True, help="Run Flask in debug mode")
+def web_cmd(host, port, debug):
+    """Launch the modern Web UI dashboard for pan-gdrive-sync."""
+    from .web import create_app
+
+    app = create_app()
+
+    banner = Panel(
+        f"[bold green]PanGDrive Sync Web Dashboard Running![/bold green]\n\n"
+        f"• Local URL:  [bold cyan]http://{host}:{port}[/bold cyan]\n"
+        f"• Features:   [yellow]Dual-Pane Explorer, Zero-Disk Pipe Transfer, SSE Task Monitor[/yellow]\n\n"
+        f"Press [bold red]Ctrl+C[/bold red] to stop the server.",
+        title="[bold blue]🚀 PanGDrive Sync Web[/bold blue]",
+        expand=False,
+    )
+    console.print(banner)
+
+    app.run(host=host, port=port, debug=debug, threaded=True)
+
+
 def main():
     cli()
 

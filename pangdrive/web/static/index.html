@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PanGDrive Sync - 百度网盘 ⇄ Google Drive 跨云互传与同步平台</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔄</text></svg>">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+        </svg>
+      </div>
+      <div>
+        <span>PanGDrive Sync</span>
+        <span style="font-size: 0.75rem; font-weight: 500; color: var(--accent-blue); margin-left: 0.35rem; background: rgba(56, 189, 248, 0.15); padding: 0.1rem 0.4rem; border-radius: 4px;">v1.0.0</span>
+      </div>
+    </div>
+
+    <!-- Connection Status Indicators -->
+    <div class="header-status">
+      <div class="status-chip" id="baiduStatusChip">
+        <span class="dot" id="baiduStatusDot"></span>
+        <span id="baiduStatusText">百度网盘: 检测中...</span>
+      </div>
+      <div class="status-chip" id="gdriveStatusChip">
+        <span class="dot" id="gdriveStatusDot"></span>
+        <span id="gdriveStatusText">Google Drive: 检测中...</span>
+      </div>
+    </div>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <button class="btn btn-secondary" onclick="openModal('quotaModal')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+        <span>存储配额</span>
+      </button>
+      <button class="btn btn-secondary" onclick="openModal('settingsModal')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>设置 / 凭据</span>
+      </button>
+      <button class="btn btn-primary" onclick="toggleTaskDrawer()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>任务监控</span>
+        <span class="badge-active" id="activeTasksCount" style="display: none;">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <div class="workspace">
+      
+      <!-- Left Pane: Baidu Netdisk -->
+      <section class="pane">
+        <div class="pane-header">
+          <div class="pane-title">
+            <span class="badge-baidu">百度网盘</span>
+            <span id="baiduSelectedCount" style="font-size: 0.8rem; color: var(--accent-blue); font-weight: 500;"></span>
+          </div>
+          <div class="pane-actions">
+            <button class="btn btn-secondary btn-icon" title="上一层目录" onclick="navigateUp('baidu')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <button class="btn btn-secondary btn-icon" title="新建文件夹" onclick="openMkdirModal('baidu')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
+            </button>
+            <button class="btn btn-secondary btn-icon" title="刷新列表" onclick="loadFiles('baidu')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="path-toolbar">
+          <div class="breadcrumb-container" id="baiduBreadcrumbs"></div>
+          <input type="text" class="search-input" placeholder="在当前目录搜索..." oninput="onSearchInput('baidu', this.value)" />
+        </div>
+
+        <div class="file-list-wrap" id="baiduFileList"></div>
+      </section>
+
+      <!-- Center Transfer Bridge Actions -->
+      <aside class="transfer-bridge">
+        <button class="bridge-btn to-right" onclick="openTransferPrompt('baidu', 'gdrive', 'copy')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+          <span>复制到 GDrive</span>
+        </button>
+
+        <button class="bridge-btn to-right" onclick="openTransferPrompt('baidu', 'gdrive', 'sync')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+          <span>同步到 GDrive</span>
+        </button>
+
+        <button class="bridge-btn to-left" onclick="openTransferPrompt('gdrive', 'baidu', 'copy')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          <span>复制到百度盘</span>
+        </button>
+
+        <button class="bridge-btn to-left" onclick="openTransferPrompt('gdrive', 'baidu', 'sync')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+          <span>同步到百度盘</span>
+        </button>
+      </aside>
+
+      <!-- Right Pane: Google Drive -->
+      <section class="pane">
+        <div class="pane-header">
+          <div class="pane-title">
+            <span class="badge-gdrive">Google Drive</span>
+            <span id="gdriveSelectedCount" style="font-size: 0.8rem; color: #34d399; font-weight: 500;"></span>
+          </div>
+          <div class="pane-actions">
+            <button class="btn btn-secondary btn-icon" title="上一层目录" onclick="navigateUp('gdrive')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <button class="btn btn-secondary btn-icon" title="新建文件夹" onclick="openMkdirModal('gdrive')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
+            </button>
+            <button class="btn btn-secondary btn-icon" title="刷新列表" onclick="loadFiles('gdrive')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="path-toolbar">
+          <div class="breadcrumb-container" id="gdriveBreadcrumbs"></div>
+          <input type="text" class="search-input" placeholder="在当前目录搜索..." oninput="onSearchInput('gdrive', this.value)" />
+        </div>
+
+        <div class="file-list-wrap" id="gdriveFileList"></div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- Bottom Task Drawer -->
+  <footer class="task-drawer collapsed" id="taskDrawer">
+    <div class="drawer-header" onclick="toggleTaskDrawer()">
+      <div class="drawer-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>跨云文件传输任务监控</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.5rem;" onclick="event.stopPropagation();">
+        <button class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;" onclick="clearCompletedTasks()">清空完成记录</button>
+        <button class="btn btn-secondary btn-icon" onclick="toggleTaskDrawer()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="drawer-body" id="taskListContainer">
+      <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0; font-size: 0.85rem;">暂无跨云传输任务</div>
+    </div>
+  </footer>
+
+  <!-- Modal: Transfer Confirmation -->
+  <div class="modal-overlay" id="transferModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span id="transferModalTitle">跨云互传确认</span>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('transferModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">源地址 (URI)</label>
+          <input type="text" class="form-input" id="transferSource" placeholder="例如 baidu:/文件夹 或 gdrive:/文件.pdf" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">目标地址 (URI)</label>
+          <input type="text" class="form-input" id="transferDest" placeholder="例如 gdrive:/Backup/ 或 baidu:/资料/" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">传输模式</label>
+          <select class="form-input" id="transferMode">
+            <option value="copy">单文件 / 浅层复制 (Copy)</option>
+            <option value="sync">整目录递归同步 (Sync)</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
+          <input type="checkbox" id="transferSkipExisting" checked />
+          <label for="transferSkipExisting" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">若目标文件已存在则跳过 (--skip)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('transferModal')">取消</button>
+        <button class="btn btn-primary" onclick="confirmTransfer()">立即启动传输</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Settings / Credentials -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>网盘凭据与连接设置</span>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('settingsModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="tabs">
+          <button class="tab-btn auth-tab-btn active" id="tabBtn_baidu" onclick="switchAuthTab('baidu')">百度网盘</button>
+          <button class="tab-btn auth-tab-btn" id="tabBtn_gdrive" onclick="switchAuthTab('gdrive')">Google Drive</button>
+        </div>
+
+        <!-- Baidu Tab -->
+        <div class="auth-tab-content" id="tabContent_baidu" style="display: flex; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">BDUSS 令牌</label>
+            <input type="text" class="form-input" id="baiduBdussInput" placeholder="填入百度账号的 BDUSS Cookie 键值" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">或直接粘贴浏览器完整 Cookie</label>
+            <textarea class="form-textarea" id="baiduCookiesInput" placeholder="BDUSS=...; STOKEN=...;"></textarea>
+          </div>
+          <div style="display: flex; justify-content: flex-end;">
+            <button class="btn btn-primary" onclick="saveBaiduAuth()">测试并保存百度网盘凭据</button>
+          </div>
+        </div>
+
+        <!-- GDrive Tab -->
+        <div class="auth-tab-content" id="tabContent_gdrive" style="display: none; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">认证模式</label>
+            <div style="display: flex; gap: 1.5rem; font-size: 0.85rem; margin-top: 0.25rem;">
+              <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+                <input type="radio" name="gdriveAuthType" value="service_account" checked onchange="document.getElementById('saBox').style.display='flex'; document.getElementById('tokenBox').style.display='none';" />
+                <span>服务账号 JSON 密钥 (推荐)</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+                <input type="radio" name="gdriveAuthType" value="token" onchange="document.getElementById('saBox').style.display='none'; document.getElementById('tokenBox').style.display='flex';" />
+                <span>OAuth2 Access Token</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="saBox" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <div class="form-group">
+              <label class="form-label">上传 JSON 密钥文件 或 粘贴内容</label>
+              <input type="file" accept=".json" class="form-input" onchange="handleGDriveJsonFile(this.files[0])" />
+              <textarea class="form-textarea" id="gdriveJsonInput" placeholder='{"type": "service_account", "client_email": "...", "private_key": "..."}' style="min-height: 120px;"></textarea>
+            </div>
+          </div>
+
+          <div id="tokenBox" style="display: none; flex-direction: column; gap: 0.5rem;">
+            <div class="form-group">
+              <label class="form-label">OAuth2 Access Token</label>
+              <input type="text" class="form-input" id="gdriveTokenInput" placeholder="ya29.a0Ac..." />
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end;">
+            <button class="btn btn-green" onclick="saveGDriveAuth()">测试并保存 Google Drive 凭据</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('settingsModal')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Quota -->
+  <div class="modal-overlay" id="quotaModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>跨网盘存储配额对比</span>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('quotaModal')">✕</button>
+      </div>
+      <div class="modal-body" id="quotaModalBody">
+        <div style="text-align: center; color: var(--text-muted); padding: 1rem 0;">正在加载配额数据...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('quotaModal')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Mkdir -->
+  <div class="modal-overlay" id="mkdirModal">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-header">
+        <span>新建文件夹</span>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('mkdirModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 0.85rem; color: var(--text-secondary);">
+          网盘: <strong id="mkdirDriveName" style="color: var(--text-primary);"></strong><br />
+          父目录: <span id="mkdirParentPath" style="color: var(--accent-blue); word-break: break-all;"></span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">新文件夹名称</label>
+          <input type="text" class="form-input" id="mkdirFolderName" placeholder="输入文件夹名称" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('mkdirModal')">取消</button>
+        <button class="btn btn-primary" onclick="confirmMkdir()">确认创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

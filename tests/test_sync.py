@@ -78,6 +78,52 @@ class TestPanGDriveSync(unittest.TestCase):
         self.assertEqual(gdrive._path_cache["/"], "root")
         print("Test 04 passed: Google Drive client initialized properly")
 
+    def test_05_web_endpoints(self):
+        from pangdrive.web.app import create_app
+        from pangdrive.web.task_manager import TaskManager
+
+        app = create_app()
+        client = app.test_client()
+
+        # 1. Test index page
+        res = client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"PanGDrive Sync", res.data)
+
+        # 2. Test static assets
+        res_css = client.get("/static/style.css")
+        self.assertEqual(res_css.status_code, 200)
+        res_js = client.get("/static/app.js")
+        self.assertEqual(res_js.status_code, 200)
+
+        # 3. Test /api/status
+        res_status = client.get("/api/status")
+        self.assertEqual(res_status.status_code, 200)
+        status_data = res_status.get_json()
+        self.assertIn("baidu", status_data)
+        self.assertIn("gdrive", status_data)
+        self.assertTrue(status_data["baidu"]["authenticated"])
+
+        # 4. Test /api/files listing for baidu
+        res_files = client.get("/api/files?drive=baidu&path=/")
+        self.assertEqual(res_files.status_code, 200)
+        files_data = res_files.get_json()
+        self.assertTrue(files_data["ok"])
+        self.assertIsInstance(files_data["items"], list)
+
+        # 5. Test /api/tasks
+        res_tasks = client.get("/api/tasks")
+        self.assertEqual(res_tasks.status_code, 200)
+        tasks_data = res_tasks.get_json()
+        self.assertTrue(tasks_data["ok"])
+
+        # 6. Test TaskManager functionality
+        tm = TaskManager.get_instance()
+        all_tasks = tm.get_all_tasks()
+        self.assertIsInstance(all_tasks, list)
+
+        print("Test 05 passed: Web UI and REST API endpoints functional")
+
 
 if __name__ == "__main__":
     unittest.main()
