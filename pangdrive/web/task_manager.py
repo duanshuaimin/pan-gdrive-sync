@@ -57,6 +57,7 @@ class Task:
         self.speed_bytes_sec = 0.0
 
         self.cancel_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
 
     def update_bytes(self, chunk_len: int, current_transferred: int, total: int):
         now = time.time()
@@ -165,10 +166,9 @@ class TaskManager:
             )
             self.tasks[t.id] = t
 
-        # 3. Start background job scheduler thread
-        self._scheduler_running = True
-        self._scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
-        self._scheduler_thread.start()
+        # 3. The caller starts scheduling with its desired poll interval.
+        self._scheduler_running = False
+        self._scheduler_thread: Optional[threading.Thread] = None
 
     # ==========================================
     # Real-time SSE Subscriptions
@@ -212,6 +212,7 @@ class TaskManager:
         skip_existing: bool = True,
         recursive: bool = True,
         job_id: Optional[str] = None,
+        waitable: bool = True,
     ) -> Task:
         task_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         task = Task(
@@ -231,9 +232,21 @@ class TaskManager:
 
         # Launch background runner
         thread = threading.Thread(target=self._run_task, args=(task,), daemon=True)
+        if waitable:
+            task._thread = thread
         thread.start()
         self.broadcast()
         return task
+
+    def wait_for_tasks(self, tasks: List[Task], timeout: Optional[float] = None):
+        """Wait for the supplied task threads to finish."""
+        deadline = (time.monotonic() + timeout) if timeout is not None else None
+        for task in tasks:
+            thread = task._thread
+            if thread is None:
+                continue
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            thread.join(remaining)
 
     def get_task(self, task_id: str) -> Optional[Task]:
         with self.lock:
@@ -379,16 +392,14 @@ class TaskManager:
             now = time.time()
             job = self.storage.get_job(task.job_id)
             if job:
-                interval = job.get("interval_seconds", 0)
-                next_run = (now + interval) if interval > 0 else None
                 self.storage.update_job(
                     task.job_id,
                     last_run_at=now,
                     last_status=task.status,
-                    next_run_at=next_run,
                 )
 
         self.broadcast()
+        self.storage.close_thread_connection()
 
     # ==========================================
     # Persistent Sync Jobs Management & Scheduling
@@ -440,6 +451,11 @@ class TaskManager:
         if not job:
             return None
 
+        now = time.time()
+        interval = job.get("interval_seconds", 0)
+        if interval > 0:
+            self.storage.update_job(job_id, next_run_at=now + interval)
+
         task = self.create_task(
             source=job["source"],
             dest=job["dest"],
@@ -479,10 +495,21 @@ class TaskManager:
             pass
         return triggered
 
-    def _scheduler_loop(self):
+    def start_scheduler(self, poll_seconds: int = 5):
+        """Start the scheduler if it is not already running."""
+        with self.lock:
+            if self._scheduler_running:
+                return
+            self._scheduler_running = True
+            self._scheduler_thread = threading.Thread(
+                target=self._scheduler_loop, args=(poll_seconds,), daemon=True
+            )
+            self._scheduler_thread.start()
+
+    def _scheduler_loop(self, poll_seconds: int):
         """Background scheduler polling loop that triggers scheduled sync jobs."""
         while self._scheduler_running:
-            time.sleep(5)
+            time.sleep(poll_seconds)
             self.run_due_jobs()
 
     def stop_scheduler(self):

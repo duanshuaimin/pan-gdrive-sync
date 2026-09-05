@@ -45,6 +45,7 @@ def create_app() -> Flask:
     app.config["JSON_AS_ASCII"] = False
 
     task_mgr = TaskManager.get_instance()
+    task_mgr.start_scheduler()
 
     @app.before_request
     def require_web_auth():

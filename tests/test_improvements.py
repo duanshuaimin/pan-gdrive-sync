@@ -329,6 +329,59 @@ class TestDaemonAndScheduler(unittest.TestCase):
             self.assertEqual(len(triggered), 1)
             mock_trigger.assert_called_once_with("job_due")
 
+    def test_run_due_jobs_waits_for_transfer_and_advances_schedule_at_trigger(self):
+        import time
+
+        self.storage.create_job(
+            job_id="job_wait",
+            name="Wait for Job",
+            source="baidu:/src",
+            dest="gdrive:/dst",
+            interval_seconds=60,
+        )
+        self.storage.update_job("job_wait", next_run_at=time.time() - 1)
+
+        def slow_sync_directory(**kwargs):
+            time.sleep(0.1)
+            return {"total_bytes": 0}
+
+        trigger_time = time.time()
+        with mock.patch.object(TransferEngine, "sync_directory", side_effect=slow_sync_directory), \
+             mock.patch.object(
+                 self.storage,
+                 "close_thread_connection",
+                 wraps=self.storage.close_thread_connection,
+             ) as close_connection:
+            triggered = self.task_mgr.run_due_jobs()
+            self.assertEqual(len(triggered), 1)
+            self.task_mgr.wait_for_tasks(triggered)
+
+        task = triggered[0]
+        job = self.storage.get_job("job_wait")
+        self.assertEqual(task.status, "completed")
+        self.assertGreaterEqual(task.finished_at - task.started_at, 0.1)
+        self.assertGreaterEqual(job["next_run_at"], trigger_time + 59.9)
+        self.assertEqual(job["last_status"], "completed")
+        close_connection.assert_called_once_with()
+
+    def test_run_due_jobs_skips_job_with_running_task(self):
+        import time
+
+        self.storage.create_job(
+            job_id="job_running",
+            name="Already Running",
+            source="baidu:/src",
+            dest="gdrive:/dst",
+            interval_seconds=60,
+        )
+        self.storage.update_job("job_running", next_run_at=time.time() - 1)
+        running_task = mock.MagicMock(job_id="job_running", status="running")
+
+        with mock.patch.object(self.task_mgr, "trigger_job") as mock_trigger, \
+             mock.patch.object(self.task_mgr, "tasks", {"task_running": running_task}):
+            self.assertEqual(self.task_mgr.run_due_jobs(), [])
+            mock_trigger.assert_not_called()
+
     def test_cli_job_run_due(self):
         runner = CliRunner()
         with mock.patch("pangdrive.web.task_manager.TaskManager.get_instance") as mock_mgr_inst:
@@ -341,6 +394,7 @@ class TestDaemonAndScheduler(unittest.TestCase):
             result = runner.invoke(cli, ["job", "run-due"])
             self.assertEqual(result.exit_code, 0)
             self.assertIn("Triggered job task", result.output)
+            mgr.wait_for_tasks.assert_called_once_with(mgr.run_due_jobs.return_value)
 
     def test_cli_daemon_once_mode(self):
         runner = CliRunner()
@@ -353,6 +407,7 @@ class TestDaemonAndScheduler(unittest.TestCase):
             self.assertEqual(result.exit_code, 0)
             self.assertIn("Checking scheduled sync jobs", result.output)
             self.assertIn("No scheduled jobs currently due", result.output)
+            mgr.wait_for_tasks.assert_called_once_with([])
 
     def test_cli_job_systemd_daemon_template(self):
         runner = CliRunner()

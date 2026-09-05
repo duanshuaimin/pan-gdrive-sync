@@ -368,8 +368,10 @@ def daemon_cmd(interval, once):
         else:
             for t in triggered:
                 console.print(f"[bold green]✓ Triggered due job task:[/bold green] {t.id} ({t.source} ➔ {t.dest})")
+        task_mgr.wait_for_tasks(triggered)
         return
 
+    task_mgr.start_scheduler(poll_seconds=interval)
     banner = Panel(
         f"[bold green]Pan-GDrive-Sync Background Scheduler Daemon Running![/bold green]\n\n"
         f"• Polling Interval: [cyan]{interval}s[/cyan]\n"
@@ -617,6 +619,7 @@ def job_run_due_cmd():
     else:
         for t in triggered:
             console.print(f"[bold green]✓ Triggered job task:[/bold green] {t.id} ({t.source} ➔ {t.dest})")
+    task_mgr.wait_for_tasks(triggered)
 
 
 @job_group.command("systemd")

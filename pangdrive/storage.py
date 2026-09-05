@@ -53,6 +53,13 @@ class Storage:
             self._local.conn = conn
         return self._local.conn
 
+    def close_thread_connection(self) -> None:
+        """Close this thread's SQLite connection when its work is complete."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
+
     def _init_db(self):
         conn = self._get_connection()
         with conn:

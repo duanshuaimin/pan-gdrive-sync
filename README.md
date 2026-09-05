@@ -177,7 +177,11 @@ pan-gdrive-sync job systemd --mode daemon --write
 # 启动常驻调度器守护进程（每 5 秒巡检已到期任务）
 pan-gdrive-sync daemon
 
+# 使用自定义巡检间隔（例如每 30 秒）
+pan-gdrive-sync daemon --interval 30
+
 # 单次执行当前所有到期任务后退出（特别适合配合系统 crontab 调度使用）
+# 该命令会等待本次触发的同步任务完成后再退出。
 pan-gdrive-sync daemon --once
 # 配合 crontab 示例（每 10 分钟检查一次）：
 # */10 * * * * pgsync daemon --once >> ~/.config/pan-gdrive-sync/cron.log 2>&1
