@@ -655,6 +655,39 @@ class TestSkipBySize(unittest.TestCase):
         engine.gdrive.upload_stream.assert_called_once()
 
 
+class TestTransferDestinationPath(unittest.TestCase):
+    def test_extensionless_dest_not_treated_as_folder_when_meta_not_dir(self):
+        engine = TransferEngine.__new__(TransferEngine)
+        engine.baidu = mock.MagicMock()
+        engine.gdrive = mock.MagicMock()
+        engine.baidu.meta.return_value = [{"size": 100, "isdir": 0}]
+
+        meta_search_resp = mock.MagicMock()
+        meta_search_resp.json.return_value = {
+            "files": [
+                {
+                    "id": "file-id",
+                    "size": "100",
+                    "mimeType": "application/pdf",
+                }
+            ]
+        }
+        engine.gdrive.resolve_path.return_value = "parent-id"
+        engine.gdrive.session.get.return_value = meta_search_resp
+
+        download_resp = mock.MagicMock()
+        download_resp.raw = io.BytesIO(b"pdf content")
+        engine.gdrive.download_stream.return_value = (download_resp, 100, "")
+
+        engine.transfer_file(
+            "gdrive", "/source/report.pdf", "baidu", "/backups/report_final"
+        )
+
+        engine.baidu.upload_stream.assert_called_once()
+        call_dst_path = engine.baidu.upload_stream.call_args[0][1]
+        self.assertEqual(call_dst_path, "/backups/report_final")
+
+
 class TestSyncDiskCacheAndHistory(unittest.TestCase):
     def test_sync_passes_disk_cache_to_each_file_transfer(self):
         engine = TransferEngine.__new__(TransferEngine)
