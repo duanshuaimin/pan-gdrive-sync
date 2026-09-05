@@ -128,9 +128,47 @@ class TestWebBasicAuth(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
 
-            # Query param auth fallback for SSE/EventSource
             response_param = client.get(f"/api/status?auth={token}")
-            self.assertEqual(response_param.status_code, 200)
+            self.assertEqual(response_param.status_code, 401)
+
+    def test_session_cookie_allows_api_access_and_logout_revokes_it(self):
+        from pangdrive.web.app import create_app
+
+        cfg = self._config_with_web_auth()
+        with mock.patch("pangdrive.web.app.config", cfg), mock.patch(
+            "pangdrive.web.app.TaskManager.get_instance", return_value=mock.MagicMock()
+        ):
+            client = create_app().test_client()
+            login = client.post(
+                "/api/session", json={"username": "admin", "password": "secret"}
+            )
+            self.assertEqual(login.status_code, 200)
+            cookie = login.headers.get("Set-Cookie", "")
+            self.assertIn("pgsync_session=", cookie)
+            self.assertIn("HttpOnly", cookie)
+            self.assertIn("SameSite=Strict", cookie)
+            self.assertIn("Path=/", cookie)
+
+            self.assertEqual(client.get("/api/status").status_code, 200)
+
+            logout = client.delete("/api/session")
+            self.assertEqual(logout.status_code, 200)
+            self.assertIn("pgsync_session=;", logout.headers.get("Set-Cookie", ""))
+            self.assertEqual(client.get("/api/status").status_code, 401)
+
+    def test_session_login_rejects_invalid_credentials(self):
+        from pangdrive.web.app import create_app
+
+        cfg = self._config_with_web_auth()
+        with mock.patch("pangdrive.web.app.config", cfg), mock.patch(
+            "pangdrive.web.app.TaskManager.get_instance", return_value=mock.MagicMock()
+        ):
+            response = create_app().test_client().post(
+                "/api/session", json={"username": "admin", "password": "wrong"}
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("WWW-Authenticate", response.headers)
 
     def test_transfer_and_job_apis_reject_invalid_mode(self):
         from pangdrive.web.app import create_app
@@ -309,6 +347,27 @@ class TestWebBasicAuth(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(cfg.data["gdrive"]["service_account_file"], str(expected_path))
         chmod.assert_any_call(expected_path, 0o600)
+
+
+class TestSessionStore(unittest.TestCase):
+    def test_validates_fresh_token_and_revokes_it(self):
+        from pangdrive.web.session_store import SessionStore
+
+        store = SessionStore()
+        token = store.create()
+
+        self.assertTrue(store.validate(token))
+        store.revoke(token)
+        self.assertFalse(store.validate(token))
+
+    def test_prunes_expired_token_during_validation(self):
+        from pangdrive.web.session_store import SessionStore
+
+        store = SessionStore()
+        token = store.create(ttl=0)
+
+        self.assertFalse(store.validate(token))
+        self.assertNotIn(token, store._sessions)
 
 
 class TestCliSchedulingHelp(unittest.TestCase):

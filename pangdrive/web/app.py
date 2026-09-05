@@ -1,6 +1,5 @@
 """Flask Web Application for pan-gdrive-sync."""
 
-import base64
 import datetime
 import json
 import os
@@ -17,7 +16,13 @@ from ..config import config
 from ..gdrive_client import GoogleDriveClient
 from ..paths import service_account_path
 from ..utils import format_size, normalize_path, split_storage_uri
+from .session_store import SessionStore
 from .task_manager import TaskManager
+
+
+session_store = SessionStore()
+SESSION_COOKIE_NAME = "pgsync_session"
+SESSION_TTL = 86400
 
 
 def format_timestamp(ts: Any) -> str:
@@ -42,32 +47,27 @@ def create_app() -> Flask:
     task_mgr = TaskManager.get_instance()
 
     @app.before_request
-    def require_basic_auth():
+    def require_web_auth():
         if not request.path.startswith("/api/"):
             return None
-        auth = request.authorization
-        username = ""
-        password = ""
-        if auth and auth.username:
-            username = auth.username
-            password = auth.password or ""
-        elif not auth and request.args.get("auth"):
-            try:
-                raw = base64.b64decode(request.args.get("auth")).decode("utf-8")
-                if ":" in raw:
-                    username, password = raw.split(":", 1)
-            except Exception:
-                pass
+        if request.path == "/api/session" and request.method == "POST":
+            return None
 
         web = config.data.get("web") or {}
         expected_user = web.get("username") or ""
         password_hash = web.get("password_hash") or ""
         if not expected_user or not password_hash:
             return jsonify({"ok": False, "error": "Web auth not configured"}), 503
+
+        if session_store.validate(request.cookies.get(SESSION_COOKIE_NAME)):
+            return None
+
+        auth = request.authorization
         if (
-            username == expected_user
-            and password
-            and check_password_hash(password_hash, password)
+            auth
+            and auth.username == expected_user
+            and auth.password
+            and check_password_hash(password_hash, auth.password)
         ):
             return None
         return Response(
@@ -75,6 +75,41 @@ def create_app() -> Flask:
             401,
             {"WWW-Authenticate": 'Basic realm="pan-gdrive-sync"'},
         )
+
+    @app.route("/api/session", methods=["POST"])
+    def create_session():
+        data = request.get_json(silent=True) or request.form
+        username = data.get("username", "")
+        password = data.get("password", "")
+        web = config.data.get("web") or {}
+        expected_user = web.get("username") or ""
+        password_hash = web.get("password_hash") or ""
+        if (
+            not expected_user
+            or not password_hash
+            or username != expected_user
+            or not password
+            or not check_password_hash(password_hash, password)
+        ):
+            return jsonify({"ok": False, "error": "Invalid username or password"}), 401
+
+        response = jsonify({"ok": True, "username": username})
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            session_store.create(ttl=SESSION_TTL),
+            httponly=True,
+            samesite="Strict",
+            path="/",
+            max_age=SESSION_TTL,
+        )
+        return response
+
+    @app.route("/api/session", methods=["DELETE"])
+    def delete_session():
+        session_store.revoke(request.cookies.get(SESSION_COOKIE_NAME))
+        response = jsonify({"ok": True})
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        return response
 
     @app.route("/")
     def index():

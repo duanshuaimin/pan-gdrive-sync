@@ -39,36 +39,20 @@ function showToast(msg, type = "info") {
 }
 
 // ==========================================
-// Web Basic Auth & Session Management
+// Web Session Management
 // ==========================================
-function getAuthHeader() {
-  return sessionStorage.getItem("pgsync_auth") || localStorage.getItem("pgsync_auth") || "";
-}
-
-function setAuthHeader(token, username = "") {
-  if (token) {
-    sessionStorage.setItem("pgsync_auth", token);
-    localStorage.setItem("pgsync_auth", token);
-    if (username) {
-      sessionStorage.setItem("pgsync_user", username);
-      localStorage.setItem("pgsync_user", username);
-    }
-  } else {
-    sessionStorage.removeItem("pgsync_auth");
-    localStorage.removeItem("pgsync_auth");
-    sessionStorage.removeItem("pgsync_user");
-    localStorage.removeItem("pgsync_user");
-  }
+function setSessionUser(username = "") {
+  if (username) sessionStorage.setItem("pgsync_user", username);
+  else sessionStorage.removeItem("pgsync_user");
   updateAuthUI();
 }
 
 function updateAuthUI() {
   const badge = document.getElementById("userAuthBadge");
   const nameEl = document.getElementById("userAuthName");
-  const token = getAuthHeader();
-  const username = sessionStorage.getItem("pgsync_user") || localStorage.getItem("pgsync_user") || "admin";
+  const username = sessionStorage.getItem("pgsync_user");
   if (badge) {
-    if (token) {
+    if (username) {
       badge.style.display = "flex";
       if (nameEl) nameEl.textContent = username;
     } else {
@@ -120,19 +104,18 @@ async function handleLoginSubmit(event) {
   }
   if (errEl) errEl.style.display = "none";
 
-  const basicToken = "Basic " + btoa(unescape(encodeURIComponent(u + ":" + p)));
-
   try {
-    const res = await fetch("/api/status", {
-      headers: { "Authorization": basicToken }
+    const res = await fetch("/api/session", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p }),
     });
     if (res.status === 200) {
-      const data = await res.json();
-      setAuthHeader(basicToken, u);
+      setSessionUser(u);
       closeLoginModal();
       showToast(`登录成功，欢迎 ${u}！`, "success");
-      state.status = data;
-      renderStatusUI(data);
+      await loadStatus();
       loadFiles("baidu");
       loadFiles("gdrive");
       loadJobs();
@@ -156,8 +139,17 @@ async function handleLoginSubmit(event) {
   }
 }
 
-function logoutWeb() {
-  setAuthHeader(null);
+async function logoutWeb() {
+  try {
+    await fetch("/api/session", { method: "DELETE", credentials: "same-origin" });
+  } catch (err) {
+    console.error("Logout request failed:", err);
+  }
+  sessionStorage.removeItem("pgsync_auth");
+  localStorage.removeItem("pgsync_auth");
+  sessionStorage.removeItem("pgsync_user");
+  localStorage.removeItem("pgsync_user");
+  updateAuthUI();
   showToast("已退出登录", "info");
   openLoginModal("已安全退出登录，请重新输入账号密码");
 }
@@ -167,11 +159,7 @@ function logoutWeb() {
 // ==========================================
 async function fetchAPI(url, options = {}) {
   try {
-    const auth = getAuthHeader();
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    if (auth) {
-      headers["Authorization"] = auth;
-    }
     const opts = {
       credentials: "same-origin",
       ...options,
@@ -179,7 +167,7 @@ async function fetchAPI(url, options = {}) {
     };
     const res = await fetch(url, opts);
     if (res.status === 401) {
-      setAuthHeader(null);
+      setSessionUser();
       openLoginModal("登录已失效或未认证，请重新登录");
       throw new Error("未授权访问 (401)");
     }
@@ -606,13 +594,7 @@ async function confirmTransfer() {
 // Task Manager & SSE Stream
 // ==========================================
 function initTaskStream() {
-  const auth = getAuthHeader();
-  let url = "/api/tasks/events";
-  if (auth) {
-    const raw = auth.replace("Basic ", "").trim();
-    url += "?auth=" + encodeURIComponent(raw);
-  }
-  const eventSource = new EventSource(url);
+  const eventSource = new EventSource("/api/tasks/events", { withCredentials: true });
 
   eventSource.onmessage = (event) => {
     try {
@@ -1090,30 +1072,20 @@ function closeModal(id) {
 // ==========================================
 window.addEventListener("DOMContentLoaded", async () => {
   updateAuthUI();
-  const token = getAuthHeader();
-  if (!token) {
-    try {
-      const probe = await fetch("/api/status", { credentials: "same-origin" });
-      if (probe.status === 200) {
-        const data = await probe.json();
-        state.status = data;
-        renderStatusUI(data);
-        loadFiles("baidu");
-        loadFiles("gdrive");
-        loadJobs();
-        initTaskStream();
-        return;
-      }
-    } catch (e) {
-      // ignore
+  try {
+    const probe = await fetch("/api/status", { credentials: "same-origin" });
+    if (probe.status === 200) {
+      const data = await probe.json();
+      state.status = data;
+      renderStatusUI(data);
+      loadFiles("baidu");
+      loadFiles("gdrive");
+      loadJobs();
+      initTaskStream();
+      return;
     }
-    openLoginModal();
-    return;
+  } catch (e) {
+    // ignore
   }
-
-  await loadStatus();
-  loadFiles("baidu");
-  loadFiles("gdrive");
-  loadJobs();
-  initTaskStream();
+  openLoginModal();
 });
