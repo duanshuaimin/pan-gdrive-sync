@@ -16,6 +16,9 @@ from .config import config
 from .utils import escape_drive_query_value, guess_mime_type, normalize_path
 
 
+SHARED_PREFIX = "/__shared__"
+
+
 class GoogleDriveClient:
     DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
     UPLOAD_API_BASE = "https://www.googleapis.com/upload/drive/v3"
@@ -212,22 +215,27 @@ class GoogleDriveClient:
         root_folder = (cfg.data.get("gdrive", {}).get("root_folder_id") if cfg and hasattr(cfg, "data") else None) or "root"
         if path == "/":
             return root_folder
+        is_shared_path = path == SHARED_PREFIX or path.startswith(f"{SHARED_PREFIX}/")
+        if path == SHARED_PREFIX:
+            return root_folder
         if path in self._path_cache:
             return self._path_cache[path]
 
-        parts = [p for p in path.strip("/").split("/") if p]
+        relative_path = path[len(SHARED_PREFIX):] if is_shared_path else path
+        parts = [p for p in relative_path.strip("/").split("/") if p]
         curr_id = root_folder
         curr_path = ""
 
-        for part in parts:
+        for index, part in enumerate(parts):
             curr_path += "/" + part
-            if curr_path in self._path_cache:
-                curr_id = self._path_cache[curr_path]
+            cache_path = f"{SHARED_PREFIX}{curr_path}" if is_shared_path else curr_path
+            if cache_path in self._path_cache:
+                curr_id = self._path_cache[cache_path]
                 continue
 
-            if curr_id in ("root", root_folder):
+            if is_shared_path and index == 0:
                 query = (
-                    f"name = '{escape_drive_query_value(part)}' and ('{curr_id}' in parents or sharedWithMe = true) "
+                    f"name = '{escape_drive_query_value(part)}' and sharedWithMe = true "
                     f"and mimeType = '{self.FOLDER_MIME}' and trashed = false"
                 )
             else:
@@ -267,9 +275,9 @@ class GoogleDriveClient:
                 c_data = self._check(c_resp)
                 curr_id = c_data["id"]
             else:
-                raise FileNotFoundError(f"Google Drive directory not found: {curr_path}")
+                raise FileNotFoundError(f"Google Drive directory not found: {cache_path}")
 
-            self._path_cache[curr_path] = curr_id
+            self._path_cache[cache_path] = curr_id
 
         return curr_id
 
@@ -280,8 +288,8 @@ class GoogleDriveClient:
         root_folder = (cfg.data.get("gdrive", {}).get("root_folder_id") if cfg and hasattr(cfg, "data") else None) or "root"
 
         url = f"{self.DRIVE_API_BASE}/files"
-        if target_id in ("root", root_folder):
-            query = f"('{target_id}' in parents or sharedWithMe = true) and trashed = false"
+        if path == SHARED_PREFIX:
+            query = "sharedWithMe = true and trashed = false"
         else:
             query = f"'{target_id}' in parents and trashed = false"
         items = []

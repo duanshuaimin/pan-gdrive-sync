@@ -113,7 +113,13 @@ pan-gdrive-sync ls baidu:/2015-2026语文中考真题
 # 列出 Google Drive 根目录或子文件夹
 pan-gdrive-sync ls gdrive:/
 pan-gdrive-sync ls gdrive:/Backup
+
+# 共享给我的 Google Drive 项目位于独立命名空间
+pan-gdrive-sync ls gdrive:/__shared__/
+pan-gdrive-sync ls gdrive:/__shared__/SharedFolder
 ```
+Google Drive 根目录只显示个人 Drive 中的项目；“与我共享”的项目请通过
+`/__shared__/` 浏览，以避免与根目录内容混合。
 
 ### 2. 单文件跨云互传 (`copy`)
 ```bash

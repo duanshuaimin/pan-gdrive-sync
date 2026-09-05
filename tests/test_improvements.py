@@ -284,6 +284,44 @@ class TestGoogleDocsExport(unittest.TestCase):
             self.assertEqual(call_dst_path, "/backup/Summary.docx")
 
 
+class TestGoogleDriveSharedNamespace(unittest.TestCase):
+    def setUp(self):
+        self.client = GoogleDriveClient.__new__(GoogleDriveClient)
+        self.client.session = mock.MagicMock()
+        self.client._get_headers = mock.MagicMock(return_value={})
+        self.client._path_cache = {"/": "root"}
+
+    def test_root_listing_excludes_shared_items(self):
+        self.client._check = mock.MagicMock(return_value={"files": []})
+
+        self.client.list_dir("/")
+
+        query = self.client.session.get.call_args.kwargs["params"]["q"]
+        self.assertEqual(query, "'root' in parents and trashed = false")
+        self.assertNotIn("sharedWithMe", query)
+
+    def test_shared_namespace_listing_queries_shared_items(self):
+        self.client._check = mock.MagicMock(return_value={"files": []})
+
+        self.client.list_dir("/__shared__")
+
+        query = self.client.session.get.call_args.kwargs["params"]["q"]
+        self.assertEqual(query, "sharedWithMe = true and trashed = false")
+
+    def test_shared_namespace_resolution_uses_shared_query_for_first_component(self):
+        self.client._check = mock.MagicMock(return_value={"files": [{"id": "shared-folder"}]})
+
+        folder_id = self.client.resolve_path("/__shared__/Foo")
+
+        self.assertEqual(folder_id, "shared-folder")
+        query = self.client.session.get.call_args.kwargs["params"]["q"]
+        self.assertEqual(
+            query,
+            "name = 'Foo' and sharedWithMe = true and "
+            "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        )
+
+
 class TestDaemonAndScheduler(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
