@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ..config import config
 from ..storage import Storage
 from ..transfer import TransferCancelledError, TransferEngine
 from ..utils import format_size
@@ -135,6 +136,7 @@ class TaskManager:
             cls._instance = None
 
     def __init__(self, db_path: Optional[str] = None):
+        self.config = config
         self.storage = Storage.get_instance(db_path=db_path)
         self.tasks: Dict[str, Task] = {}
         self.lock = threading.Lock()
