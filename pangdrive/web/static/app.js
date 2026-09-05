@@ -141,6 +141,7 @@ async function handleLoginSubmit(event) {
 }
 
 async function logoutWeb() {
+  cleanupTaskStream();
   try {
     await fetch("/api/session", { method: "DELETE", credentials: "same-origin" });
   } catch (err) {
@@ -594,7 +595,7 @@ async function confirmTransfer() {
 // ==========================================
 // Task Manager & SSE Stream
 // ==========================================
-function initTaskStream() {
+function cleanupTaskStream() {
   if (state.eventSource) {
     try {
       state.eventSource.close();
@@ -605,7 +606,10 @@ function initTaskStream() {
     clearInterval(state.taskPollTimer);
     state.taskPollTimer = null;
   }
+}
 
+function initTaskStream() {
+  cleanupTaskStream();
   const eventSource = new EventSource("/api/tasks/events", { withCredentials: true });
   state.eventSource = eventSource;
 

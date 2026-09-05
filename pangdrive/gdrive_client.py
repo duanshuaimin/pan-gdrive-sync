@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import re
 import time
 import urllib.parse
 from pathlib import Path
@@ -216,6 +217,8 @@ class GoogleDriveClient:
         if path == "/":
             return root_folder
         is_shared_path = path == SHARED_PREFIX or path.startswith(f"{SHARED_PREFIX}/")
+        if is_shared_path and create_missing:
+            raise ValueError("Cannot create folders under the read-only shared namespace")
         if path == SHARED_PREFIX:
             return root_folder
         if path in self._path_cache:
@@ -423,6 +426,8 @@ class GoogleDriveClient:
     ) -> Dict[str, Any]:
         """Upload a file or stream to Google Drive."""
         path = normalize_path(remote_path)
+        if path == SHARED_PREFIX or path.startswith(f"{SHARED_PREFIX}/"):
+            raise ValueError("Cannot upload to the read-only shared namespace")
         filename = os.path.basename(path)
         parent_path = os.path.dirname(path) or "/"
         parent_id = self.resolve_path(parent_path, create_missing=True)
@@ -491,6 +496,7 @@ class GoogleDriveClient:
             offset = 0
             pending = b""
             pending_offset = 0
+            no_progress_308s = 0
             while offset < size:
                 if not pending:
                     bytes_to_read = min(chunk_size, size - offset)
@@ -512,24 +518,25 @@ class GoogleDriveClient:
                     if put_resp.status_code not in (429, 500, 502, 503):
                         break
                     if retry_count == 2:
-                        return self._check(put_resp)
+                        put_resp.raise_for_status()
+                        raise RuntimeError("Google Drive transient upload retry unexpectedly succeeded")
                     time.sleep(0.5 * (2**retry_count))
 
                 if put_resp.status_code in (200, 201):
                     return self._check(put_resp)
                 elif put_resp.status_code == 308:
                     range_hdr = put_resp.headers.get("Range") or put_resp.headers.get("range")
-                    if range_hdr and range_hdr.startswith("bytes=") and "-" in range_hdr:
-                        try:
-                            committed_offset = int(range_hdr.rsplit("-", 1)[1]) + 1
-                        except ValueError:
-                            offset += chunk_len
-                        else:
-                            if not pending_offset <= committed_offset <= pending_offset + len(pending):
-                                raise RuntimeError("Google Drive returned an invalid resumable upload Range")
-                            offset = committed_offset
+                    range_match = re.fullmatch(r"bytes=0-(\d+)", range_hdr or "")
+                    committed_offset = int(range_match.group(1)) + 1 if range_match else offset
+                    if committed_offset > offset:
+                        if not pending_offset <= committed_offset <= pending_offset + len(pending):
+                            raise RuntimeError("Google Drive returned an invalid resumable upload Range")
+                        offset = committed_offset
+                        no_progress_308s = 0
                     else:
-                        offset += chunk_len
+                        no_progress_308s += 1
+                        if no_progress_308s >= 5:
+                            raise RuntimeError("Google Drive resumable upload made no upload progress")
                     if offset >= pending_offset + len(pending):
                         pending = b""
                 else:

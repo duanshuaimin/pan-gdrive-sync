@@ -667,6 +667,112 @@ class TestSkipBySize(unittest.TestCase):
         )
         sleep.assert_called_once()
 
+    def test_gdrive_upload_retries_same_offset_when_308_has_no_range(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"transfer": {"chunk_size": 256 * 1024}}
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(side_effect=[{"files": []}, {"id": "new-id"}])
+        client.session.post.return_value.status_code = 200
+        client.session.post.return_value.headers = {"Location": "https://upload.example"}
+        client.session.put.side_effect = [
+            mock.MagicMock(status_code=308, headers={}),
+            mock.MagicMock(status_code=200),
+        ]
+
+        result = client.upload_stream(
+            io.BytesIO(b"x" * (256 * 1024)),
+            "/dest/file.txt",
+            size=256 * 1024,
+        )
+
+        self.assertEqual(result, {"id": "new-id"})
+        self.assertEqual(
+            client.session.put.call_args_list[0].kwargs["headers"]["Content-Range"],
+            client.session.put.call_args_list[1].kwargs["headers"]["Content-Range"],
+        )
+
+    def test_gdrive_upload_aborts_after_five_no_progress_308s(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"transfer": {"chunk_size": 256 * 1024}}
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(return_value={"files": []})
+        client.session.post.return_value.status_code = 200
+        client.session.post.return_value.headers = {"Location": "https://upload.example"}
+        client.session.put.return_value = mock.MagicMock(status_code=308, headers={})
+
+        with self.assertRaisesRegex(RuntimeError, "no upload progress"):
+            client.upload_stream(
+                io.BytesIO(b"x" * (256 * 1024)),
+                "/dest/file.txt",
+                size=256 * 1024,
+            )
+
+        self.assertEqual(client.session.put.call_count, 5)
+
+    def test_gdrive_upload_raises_after_transient_retry_exhaustion(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"transfer": {"chunk_size": 256 * 1024}}
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(return_value={"files": []})
+        client.session.post.return_value.status_code = 200
+        client.session.post.return_value.headers = {"Location": "https://upload.example"}
+        exhausted = mock.MagicMock(status_code=503)
+        exhausted.raise_for_status.side_effect = RuntimeError("503 unavailable")
+        client.session.put.return_value = exhausted
+
+        with mock.patch("pangdrive.gdrive_client.time.sleep"), \
+             self.assertRaisesRegex(RuntimeError, "503 unavailable"):
+            client.upload_stream(
+                io.BytesIO(b"x" * (256 * 1024)),
+                "/dest/file.txt",
+                size=256 * 1024,
+            )
+
+        exhausted.raise_for_status.assert_called_once_with()
+
+    def test_gdrive_resolve_shared_path_never_creates_missing_folder(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.session = mock.MagicMock()
+        client._get_headers = mock.MagicMock(return_value={})
+        client._path_cache = {"/": "root"}
+
+        with self.assertRaisesRegex(ValueError, "shared"):
+            client.resolve_path("/__shared__/missing", create_missing=True)
+
+        client.session.post.assert_not_called()
+
+    def test_gdrive_upload_rejects_shared_namespace(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.resolve_path = mock.MagicMock()
+
+        with self.assertRaisesRegex(ValueError, "shared"):
+            client.upload_stream(
+                io.BytesIO(b"x"),
+                "/__shared__/file.txt",
+                size=1,
+            )
+
+        client.resolve_path.assert_not_called()
+
     def test_baidu_upload_skip_replaces_size_mismatch(self):
         from pangdrive.baidu_client import BaiduClient
 

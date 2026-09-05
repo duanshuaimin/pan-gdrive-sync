@@ -520,6 +520,20 @@ class TestDaemonAndScheduler(unittest.TestCase):
             self.assertIn("No scheduled jobs currently due", result.output)
             mgr.wait_for_tasks.assert_called_once_with([])
 
+    def test_cli_daemon_once_exits_when_another_run_holds_lock(self):
+        import fcntl
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp_home, \
+             mock.patch("pathlib.Path.home", return_value=Path(tmp_home)), \
+             mock.patch("fcntl.flock", side_effect=BlockingIOError), \
+             mock.patch("pangdrive.web.task_manager.TaskManager.get_instance") as mock_mgr_inst:
+            result = runner.invoke(cli, ["daemon", "--once"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("already running", result.output)
+        mock_mgr_inst.assert_not_called()
+
     def test_cli_job_systemd_daemon_template(self):
         runner = CliRunner()
         result = runner.invoke(cli, ["job", "systemd", "--mode", "daemon"])

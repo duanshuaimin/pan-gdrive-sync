@@ -188,6 +188,7 @@ pan-gdrive-sync daemon --interval 30
 
 # 单次执行当前所有到期任务后退出（特别适合配合系统 crontab 调度使用）
 # 该命令会等待本次触发的同步任务完成后再退出。
+# 同一时间只允许一个 --once 运行；重叠的 crontab 调用会提示并立即退出。
 pan-gdrive-sync daemon --once
 # 配合 crontab 示例（每 10 分钟检查一次）：
 # */10 * * * * pgsync daemon --once >> ~/.config/pan-gdrive-sync/cron.log 2>&1

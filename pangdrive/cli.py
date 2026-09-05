@@ -354,23 +354,35 @@ def web_cmd(host, port, debug):
 @click.option("--once", is_flag=True, help="Check and execute due jobs once, then exit (ideal for crontab)")
 def daemon_cmd(interval, once):
     """Run headless background job scheduler daemon."""
+    import fcntl
     import signal
     import time
     from .web.task_manager import TaskManager
 
-    task_mgr = TaskManager.get_instance()
-
     if once:
-        console.print("[bold cyan]Checking scheduled sync jobs (single pass)...[/bold cyan]")
-        triggered = task_mgr.run_due_jobs()
-        if not triggered:
-            console.print("[dim]No scheduled jobs currently due.[/dim]")
-        else:
-            for t in triggered:
-                console.print(f"[bold green]✓ Triggered due job task:[/bold green] {t.id} ({t.source} ➔ {t.dest})")
-        task_mgr.wait_for_tasks(triggered)
+        lock_path = Path.home() / ".config" / "pan-gdrive-sync" / "daemon-once.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                console.print("[yellow]A daemon --once run is already running; exiting.[/yellow]")
+                return
+            try:
+                task_mgr = TaskManager.get_instance()
+                console.print("[bold cyan]Checking scheduled sync jobs (single pass)...[/bold cyan]")
+                triggered = task_mgr.run_due_jobs()
+                if not triggered:
+                    console.print("[dim]No scheduled jobs currently due.[/dim]")
+                else:
+                    for t in triggered:
+                        console.print(f"[bold green]✓ Triggered due job task:[/bold green] {t.id} ({t.source} ➔ {t.dest})")
+                task_mgr.wait_for_tasks(triggered)
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         return
 
+    task_mgr = TaskManager.get_instance()
     task_mgr.start_scheduler(poll_seconds=interval)
     banner = Panel(
         f"[bold green]Pan-GDrive-Sync Background Scheduler Daemon Running![/bold green]\n\n"
