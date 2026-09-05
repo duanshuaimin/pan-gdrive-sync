@@ -17,7 +17,8 @@ const state = {
     loading: false,
   },
   tasks: [],
-  sseConnected: false,
+  eventSource: null,
+  taskPollTimer: null,
 };
 
 // ==========================================
@@ -594,7 +595,19 @@ async function confirmTransfer() {
 // Task Manager & SSE Stream
 // ==========================================
 function initTaskStream() {
+  if (state.eventSource) {
+    try {
+      state.eventSource.close();
+    } catch (e) {}
+    state.eventSource = null;
+  }
+  if (state.taskPollTimer) {
+    clearInterval(state.taskPollTimer);
+    state.taskPollTimer = null;
+  }
+
   const eventSource = new EventSource("/api/tasks/events", { withCredentials: true });
+  state.eventSource = eventSource;
 
   eventSource.onmessage = (event) => {
     try {
@@ -607,11 +620,12 @@ function initTaskStream() {
   };
 
   eventSource.onerror = () => {
-    // Fallback polling if SSE drops
-    if (!state.sseConnected) {
-      setInterval(pollTasks, 3000);
-      state.sseConnected = true;
-    }
+    try {
+      eventSource.close();
+    } catch (e) {}
+    if (state.eventSource === eventSource) state.eventSource = null;
+    if (state.taskPollTimer) clearInterval(state.taskPollTimer);
+    state.taskPollTimer = setInterval(pollTasks, 3000);
   };
 }
 
