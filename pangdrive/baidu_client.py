@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, Generator, List, Optional, Tuple, Union
@@ -218,9 +219,29 @@ class BaiduClient:
             f"&type=tmpfile"
         )
         files = {"file": (filename, chunk)}
-        resp = self.session.post(url, files=files, timeout=300)
-        data = self._check(resp)
-        return data["md5"]
+
+        for attempt in range(3):
+            try:
+                resp = self.session.post(url, files=files, timeout=300)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (2**attempt))
+                continue
+
+            if resp.status_code in (401, 403):
+                self._check(resp)
+
+            if resp.status_code >= 500:
+                if attempt == 2:
+                    resp.raise_for_status()
+                time.sleep(0.5 * (2**attempt))
+                continue
+
+            data = self._check(resp)
+            return data["md5"]
+
+        raise RuntimeError("Baidu block upload failed after retries")
 
     def create_superfile(
         self,
@@ -269,7 +290,12 @@ class BaiduClient:
                 break
             part_idx += 1
             part_name = f"{filename}.part{part_idx}"
-            md5_hash = self.upload_tmpfile(chunk, filename=part_name)
+            try:
+                md5_hash = self.upload_tmpfile(chunk, filename=part_name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Baidu sliced upload failed at block {part_idx}: {exc}"
+                ) from exc
             block_list.append(md5_hash)
 
         if not block_list:

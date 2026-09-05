@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+import requests
 from click.testing import CliRunner
 
 from pangdrive.baidu_client import BaiduClient
@@ -125,6 +127,77 @@ class TestBaiduSlicedUpload(unittest.TestCase):
             mock_sliced.assert_called_once_with(
                 stream, "/forced.iso", size=1024, ondup="overwrite"
             )
+
+    def test_upload_tmpfile_retries_transient_5xx_then_succeeds(self):
+        fail_resp = mock.MagicMock()
+        fail_resp.status_code = 503
+        ok_resp = mock.MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.json.return_value = {"md5": "recovered_md5", "request_id": 1}
+
+        with mock.patch.object(self.client.session, "post") as mock_post, \
+             mock.patch("pangdrive.baidu_client.time.sleep") as sleep:
+            mock_post.side_effect = [fail_resp, ok_resp]
+
+            md5 = self.client.upload_tmpfile(b"chunk-data", filename="part1")
+
+        self.assertEqual(md5, "recovered_md5")
+        self.assertEqual(mock_post.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    def test_upload_tmpfile_raises_after_max_transient_retries(self):
+        fail_resp = mock.MagicMock()
+        fail_resp.status_code = 503
+        fail_resp.raise_for_status.side_effect = requests.HTTPError("503 Server Error")
+
+        with mock.patch.object(self.client.session, "post", return_value=fail_resp) as mock_post, \
+             mock.patch("pangdrive.baidu_client.time.sleep"), \
+             self.assertRaises(requests.HTTPError):
+            self.client.upload_tmpfile(b"chunk-data", filename="part1")
+
+        self.assertEqual(mock_post.call_count, 3)
+
+    def test_upload_tmpfile_does_not_retry_auth_errors(self):
+        auth_resp = mock.MagicMock()
+        auth_resp.status_code = 401
+        auth_resp.json.side_effect = ValueError("no json")
+        auth_resp.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized")
+
+        with mock.patch.object(self.client.session, "post", return_value=auth_resp) as mock_post, \
+             mock.patch("pangdrive.baidu_client.time.sleep") as sleep, \
+             self.assertRaises(requests.HTTPError):
+            self.client.upload_tmpfile(b"chunk-data", filename="part1")
+
+        self.assertEqual(mock_post.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_upload_sliced_stream_succeeds_when_block_upload_fails_once(self):
+        data = b"A" * 100 + b"B" * 100
+        stream = io.BytesIO(data)
+
+        fail_resp = mock.MagicMock()
+        fail_resp.status_code = 503
+        ok_responses = []
+        for md5 in ("md5_part1", "md5_part2"):
+            resp = mock.MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {"md5": md5, "request_id": 1}
+            ok_responses.append(resp)
+        super_resp = mock.MagicMock()
+        super_resp.status_code = 200
+        super_resp.json.return_value = {"path": "/big.bin", "size": len(data), "status": "ok"}
+
+        with mock.patch.object(self.client, "mkdir"), \
+             mock.patch.object(self.client.session, "post") as mock_post, \
+             mock.patch("pangdrive.baidu_client.time.sleep"):
+            mock_post.side_effect = [fail_resp, ok_responses[0], ok_responses[1], super_resp]
+
+            res = self.client.upload_sliced_stream(
+                stream, "/big.bin", size=len(data), chunk_size=100, ondup="overwrite"
+            )
+
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(mock_post.call_count, 4)
 
 
 class TestGoogleDocsExport(unittest.TestCase):
