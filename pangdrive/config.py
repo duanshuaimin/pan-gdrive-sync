@@ -12,9 +12,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 BAIDUPAN_CONFIG = Path.home() / ".config" / "baidupan" / "config.json"
 BAIDUPCS_GO_CONFIG = Path.home() / ".config" / "BaiduPCS-Go" / "pcs_config.json"
 
-DEFAULT_PAN_UA = (
-    "netdisk;P2SP;3.0.0.8;netdisk;11.12.3;ANG-AN00;android-android;10.0;JSbridge4.4.0;jointBridge;1.1.0;"
-)
+DEFAULT_PAN_UA = "netdisk;2.2.51.6;netdisk;10.0.63;PC;android-android"
 DEFAULT_APP_ID = 266719
 
 

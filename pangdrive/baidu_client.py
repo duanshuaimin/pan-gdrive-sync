@@ -47,8 +47,11 @@ class BaiduClient:
             cookie_items["STOKEN"] = stoken
 
         cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_items.items())
+        ua = baidu_cfg.get("user_agent", config.data["baidu"]["user_agent"])
+        if not ua or "P2SP" in ua:
+            ua = "netdisk;2.2.51.6;netdisk;10.0.63;PC;android-android"
         self.session.headers.update({
-            "User-Agent": baidu_cfg.get("user_agent", config.data["baidu"]["user_agent"]),
+            "User-Agent": ua,
             "Cookie": cookie_str,
         })
 
