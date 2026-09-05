@@ -23,6 +23,32 @@ class GoogleDriveClient:
     SCOPES = "https://www.googleapis.com/auth/drive"
     FOLDER_MIME = "application/vnd.google-apps.folder"
 
+    GOOGLE_DOCS_EXPORT_MAP = {
+        "application/vnd.google-apps.document": (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".docx",
+        ),
+        "application/vnd.google-apps.spreadsheet": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xlsx",
+        ),
+        "application/vnd.google-apps.presentation": (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".pptx",
+        ),
+        "application/vnd.google-apps.drawing": ("image/png", ".png"),
+    }
+
+    def is_google_doc(self, mime_type: Optional[str]) -> bool:
+        """Check if a mime type represents a virtual Google Doc / Sheet / Slide."""
+        if not mime_type:
+            return False
+        return mime_type.startswith("application/vnd.google-apps.") and mime_type != self.FOLDER_MIME
+
+    def get_export_info(self, mime_type: str) -> Tuple[str, str]:
+        """Returns (export_mime_type, file_extension) for a Google Doc format."""
+        return self.GOOGLE_DOCS_EXPORT_MAP.get(mime_type, ("application/pdf", ".pdf"))
+
     def __init__(self, cfg=None):
         self.cfg = cfg or config
         self.session = requests.Session()
@@ -253,18 +279,25 @@ class GoogleDriveClient:
             resp = self.session.get(url, headers=self._get_headers(), params=params, timeout=25)
             data = self._check(resp)
             for f in data.get("files", []):
-                is_dir = f.get("mimeType") == self.FOLDER_MIME
+                mime = f.get("mimeType", "")
+                is_dir = mime == self.FOLDER_MIME
+                is_doc = self.is_google_doc(mime)
                 item_path = f"{path}/{f['name']}".replace("//", "/")
-                items.append({
+                item_dict = {
                     "id": f["id"],
                     "name": f["name"],
                     "path": item_path,
                     "isdir": is_dir,
-                    "size": int(f.get("size", 0)),
+                    "size": int(f.get("size") or 0),
                     "md5": f.get("md5Checksum", ""),
                     "mtime": f.get("modifiedTime", ""),
-                    "mime_type": f.get("mimeType", ""),
-                })
+                    "mime_type": mime,
+                }
+                if is_doc:
+                    _, ext = self.get_export_info(mime)
+                    item_dict["is_google_doc"] = True
+                    item_dict["export_ext"] = ext
+                items.append(item_dict)
             page_token = data.get("nextPageToken")
             if not page_token:
                 break
@@ -309,7 +342,7 @@ class GoogleDriveClient:
     def download_stream(self, file_id: str) -> Tuple[requests.Response, int, str]:
         """Get streaming download response from Google Drive.
 
-        Returns (response, size, md5).
+        Returns (response, size, md5). Automatically exports virtual Google Docs formats.
         """
         # Fetch file metadata first
         meta_url = f"{self.DRIVE_API_BASE}/files/{file_id}"
@@ -320,8 +353,19 @@ class GoogleDriveClient:
             timeout=15,
         )
         meta = self._check(meta_resp)
-        if meta.get("mimeType") == self.FOLDER_MIME:
+        mime = meta.get("mimeType", "")
+        if mime == self.FOLDER_MIME:
             raise IsADirectoryError(f"Google Drive item is a folder: {meta.get('name')}")
+
+        if self.is_google_doc(mime):
+            export_mime, _ext = self.get_export_info(mime)
+            url = f"{self.DRIVE_API_BASE}/files/{file_id}/export?mimeType={urllib.parse.quote(export_mime)}"
+            resp = self.session.get(url, headers=self._get_headers(), stream=True, timeout=60)
+            if resp.status_code != 200:
+                self._check(resp)
+            cl = resp.headers.get("Content-Length")
+            size = int(cl) if cl and cl.isdigit() else 0
+            return resp, size, ""
 
         size = int(meta.get("size", 0))
         md5 = meta.get("md5Checksum", "")

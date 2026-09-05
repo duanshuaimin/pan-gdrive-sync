@@ -18,6 +18,10 @@
 - 📁 **整目录递归同步 (Recursive Directory Sync)**：
   - 一键同步整个文件夹，自动保持多级目录结构与相对路径。
   - 支持冲突策略：`--overwrite`（覆盖已有文件）、`--skip`（跳过已存在同名同大小文件）。
+- 🚀 **超大文件分片合并上传 (>2GB)**：
+  - 突破百度网盘官方 PCS 接口单次 POST 2GB 上限，大文件自动采用多块切片上传与 `createsuperfile` 远端高速重组技术。
+- 📄 **Google 原生文档智能导出转换**：
+  - 无缝支持 Google Docs / Sheets / Slides 虚拟在线文档跨云传输，自动无损导出转换为 Microsoft Office 格式（`.docx` / `.xlsx` / `.pptx`）。
 - 📊 **Rich 现代化终端可视化看板**：
   - 实时显示跨云传输速率（MB/s）、已传输字节、百分比与动态 ETA 倒计时。
   - 双端存储配额（Used / Total / Free）侧重对比与状态概览看板。
@@ -158,10 +162,28 @@ pan-gdrive-sync job toggle job_1788521964_2ec45b
 
 # 删除持久化任务规则
 pan-gdrive-sync job delete job_1788521964_2ec45b
-```
-定时任务仅在 `pan-gdrive-sync web` 进程运行期间由内置调度器触发；仅 CLI 不会执行 interval。
 
-### 6. 查看持久化历史传输记录 (`history`)
+# 触发所有已到期的定时任务
+pan-gdrive-sync job run-due
+
+# 生成或安装 systemd 用户守护服务（实现开机常驻后台自动定时同步）
+pan-gdrive-sync job systemd --mode daemon --write
+```
+
+### 6. 无人值守调度器守护进程 (`daemon`)
+若您在无界面的 Linux 云服务器上运行，无需常驻 Web 前端，即可使用 `daemon` 模式让定时调度器独立在后台运转：
+
+```bash
+# 启动常驻调度器守护进程（每 5 秒巡检已到期任务）
+pan-gdrive-sync daemon
+
+# 单次执行当前所有到期任务后退出（特别适合配合系统 crontab 调度使用）
+pan-gdrive-sync daemon --once
+# 配合 crontab 示例（每 10 分钟检查一次）：
+# */10 * * * * pgsync daemon --once >> ~/.config/pan-gdrive-sync/cron.log 2>&1
+```
+
+### 7. 查看持久化历史传输记录 (`history`)
 所有单次传输与定时同步任务的执行状态、传输耗时、错误日志均持久化记录在本地 SQLite 数据库中，即便服务重启也不丢失：
 
 ```bash

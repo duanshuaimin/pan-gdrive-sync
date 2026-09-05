@@ -108,11 +108,12 @@ class TransferEngine:
             raise TransferCancelledError("Transfer cancelled by user")
 
         src_p = normalize_path(src_path)
+        is_dst_dir = dst_path.endswith("/") or dst_path.endswith("\\") or dst_path == ""
         dst_p = normalize_path(dst_path)
         filename = os.path.basename(src_p)
 
-        # Ensure destination path includes filename
-        if dst_p.endswith("/") or dst_p == "/":
+        # Ensure destination path includes filename if destination was specified as directory
+        if is_dst_dir or dst_p == "/":
             dst_p = f"{dst_p}/{filename}".replace("//", "/")
 
         if src_provider == "baidu" and dst_provider == "gdrive":
@@ -264,12 +265,27 @@ class TransferEngine:
                 raise FileNotFoundError(f"Google Drive source file not found: {src_p}")
 
             file_id = files[0]["id"]
+            mime = files[0].get("mimeType", "")
+            folder_mime = getattr(self.gdrive, "FOLDER_MIME", "application/vnd.google-apps.folder")
+            is_doc = bool(
+                mime
+                and mime.startswith("application/vnd.google-apps.")
+                and mime != folder_mime
+            )
+            if is_doc:
+                info = getattr(self.gdrive, "get_export_info", lambda m: ("application/pdf", ".pdf"))(mime)
+                ext = info[1] if isinstance(info, (tuple, list)) and len(info) >= 2 else ".pdf"
+                if not dst_p.lower().endswith(ext):
+                    dst_p = f"{dst_p}{ext}"
+
             resp, total_size, md5 = self.gdrive.download_stream(file_id)
 
             if progress and task_id is not None:
                 progress.update(task_id, total=total_size)
 
-            if use_disk_cache:
+            should_cache_to_disk = use_disk_cache or (is_doc and total_size == 0)
+
+            if should_cache_to_disk:
                 tmp_path = None
                 try:
                     with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
@@ -282,9 +298,10 @@ class TransferEngine:
                                 if progress and task_id is not None:
                                     progress.update(task_id, advance=len(chunk))
                                 if callback:
-                                    callback(len(chunk), tmp_f.tell(), total_size)
+                                    callback(len(chunk), tmp_f.tell(), total_size or tmp_f.tell())
+                        actual_size = tmp_f.tell()
                     with open(tmp_path, "rb") as f_in:
-                        res = self.baidu.upload_stream(f_in, dst_p, size=total_size, ondup=upload_ondup)
+                        res = self.baidu.upload_stream(f_in, dst_p, size=actual_size, ondup=upload_ondup)
                 finally:
                     if tmp_path and os.path.exists(tmp_path):
                         os.remove(tmp_path)
@@ -381,6 +398,10 @@ class TransferEngine:
                 f_path = it["path"]
                 rel_path = f_path[len(src_dir):].lstrip("/")
                 target_dest = f"{dst_dir}/{rel_path}".replace("//", "/")
+                if it.get("is_google_doc"):
+                    ext = it.get("export_ext", "")
+                    if ext and not target_dest.lower().endswith(ext):
+                        target_dest = f"{target_dest}{ext}"
                 f_size = it["size"]
                 f_name = it["name"]
 

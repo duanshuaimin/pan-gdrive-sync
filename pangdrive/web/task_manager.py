@@ -433,29 +433,40 @@ class TaskManager:
         )
         return task
 
+    def run_due_jobs(self) -> List[Task]:
+        """Check active scheduled jobs and trigger any that are currently due.
+
+        Returns list of newly triggered tasks.
+        """
+        now = time.time()
+        triggered = []
+        try:
+            active_jobs = self.storage.list_jobs(status="active")
+            for j in active_jobs:
+                interval = j.get("interval_seconds", 0)
+                if interval > 0:
+                    next_run = j.get("next_run_at")
+                    # If next_run is due or never set
+                    if next_run is None or now >= next_run:
+                        # Avoid duplicate runs if one is already in progress for this job
+                        with self.lock:
+                            already_running = any(
+                                t.job_id == j["id"] and t.status in ("pending", "running")
+                                for t in self.tasks.values()
+                            )
+                        if not already_running:
+                            task = self.trigger_job(j["id"])
+                            if task:
+                                triggered.append(task)
+        except Exception:
+            pass
+        return triggered
+
     def _scheduler_loop(self):
         """Background scheduler polling loop that triggers scheduled sync jobs."""
         while self._scheduler_running:
             time.sleep(5)
-            try:
-                now = time.time()
-                active_jobs = self.storage.list_jobs(status="active")
-                for j in active_jobs:
-                    interval = j.get("interval_seconds", 0)
-                    if interval > 0:
-                        next_run = j.get("next_run_at")
-                        # If next_run is due or never set
-                        if next_run is None or now >= next_run:
-                            # Avoid duplicate runs if one is already in progress for this job
-                            with self.lock:
-                                already_running = any(
-                                    t.job_id == j["id"] and t.status in ("pending", "running")
-                                    for t in self.tasks.values()
-                                )
-                            if not already_running:
-                                self.trigger_job(j["id"])
-            except Exception:
-                pass
+            self.run_due_jobs()
 
     def stop_scheduler(self):
         self._scheduler_running = False

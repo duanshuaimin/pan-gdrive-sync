@@ -349,6 +349,53 @@ def web_cmd(host, port, debug):
     app.run(host=host, port=port, debug=debug, threaded=True)
 
 
+@cli.command("daemon")
+@click.option("--interval", "-i", default=5, type=int, help="Scheduler polling interval in seconds (default: 5)")
+@click.option("--once", is_flag=True, help="Check and execute due jobs once, then exit (ideal for crontab)")
+def daemon_cmd(interval, once):
+    """Run headless background job scheduler daemon."""
+    import signal
+    import time
+    from .web.task_manager import TaskManager
+
+    task_mgr = TaskManager.get_instance()
+
+    if once:
+        console.print("[bold cyan]Checking scheduled sync jobs (single pass)...[/bold cyan]")
+        triggered = task_mgr.run_due_jobs()
+        if not triggered:
+            console.print("[dim]No scheduled jobs currently due.[/dim]")
+        else:
+            for t in triggered:
+                console.print(f"[bold green]✓ Triggered due job task:[/bold green] {t.id} ({t.source} ➔ {t.dest})")
+        return
+
+    banner = Panel(
+        f"[bold green]Pan-GDrive-Sync Background Scheduler Daemon Running![/bold green]\n\n"
+        f"• Polling Interval: [cyan]{interval}s[/cyan]\n"
+        f"• Mode:             [yellow]Headless (no web UI port bound)[/yellow]\n"
+        f"• Usage:            [dim]Runs scheduled sync jobs automatically in background[/dim]\n\n"
+        f"Press [bold red]Ctrl+C[/bold red] to stop the daemon.",
+        title="[bold blue]⏱️ Scheduler Daemon[/bold blue]",
+        expand=False,
+    )
+    console.print(banner)
+
+    running = True
+
+    def _sig_handler(sig, frame):
+        nonlocal running
+        console.print("\n[yellow]Stopping scheduler daemon...[/yellow]")
+        running = False
+        task_mgr.stop_scheduler()
+
+    signal.signal(signal.SIGINT, _sig_handler)
+    signal.signal(signal.SIGTERM, _sig_handler)
+
+    while running:
+        time.sleep(interval)
+
+
 # ==========================================
 # Persistent Sync Jobs & History Commands
 # ==========================================
@@ -556,6 +603,67 @@ def job_delete_cmd(job_id):
         console.print(f"[bold green]✓ Job {job_id} deleted successfully![/bold green]")
     else:
         console.print(f"[bold red]Job not found: {job_id}[/bold red]")
+
+
+@job_group.command("run-due")
+def job_run_due_cmd():
+    """Trigger all active sync jobs that are currently due for execution."""
+    from .web.task_manager import TaskManager
+    task_mgr = TaskManager.get_instance()
+    console.print("[bold cyan]Checking and triggering due jobs...[/bold cyan]")
+    triggered = task_mgr.run_due_jobs()
+    if not triggered:
+        console.print("[dim]No scheduled jobs currently due.[/dim]")
+    else:
+        for t in triggered:
+            console.print(f"[bold green]✓ Triggered job task:[/bold green] {t.id} ({t.source} ➔ {t.dest})")
+
+
+@job_group.command("systemd")
+@click.option(
+    "--mode",
+    type=click.Choice(["daemon", "web"]),
+    default="daemon",
+    help="Service target mode: 'daemon' (scheduler only) or 'web' (Web UI)",
+)
+@click.option("--write", "-w", is_flag=True, help="Write unit file directly to ~/.config/systemd/user/")
+def job_systemd_cmd(mode, write):
+    """Generate systemd user service unit file for automated background execution."""
+    import shutil
+    from pathlib import Path
+
+    exe_path = shutil.which("pan-gdrive-sync") or shutil.which("pgsync") or (sys.executable + " -m pangdrive.cli")
+    unit_name = f"pgsync-{mode}.service"
+    service_desc = "Pan-GDrive-Sync Scheduler Daemon" if mode == "daemon" else "Pan-GDrive-Sync Web UI Service"
+    cmd = f"{exe_path} daemon" if mode == "daemon" else f"{exe_path} web --host 127.0.0.1 --port 8080"
+
+    unit_content = f"""[Unit]
+Description={service_desc}
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={cmd}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+    if write:
+        user_systemd_dir = Path.home() / ".config" / "systemd" / "user"
+        user_systemd_dir.mkdir(parents=True, exist_ok=True)
+        unit_file = user_systemd_dir / unit_name
+        unit_file.write_text(unit_content, encoding="utf-8")
+        console.print(f"[bold green]✓ Wrote systemd service unit to:[/bold green] {unit_file}")
+        console.print(f"\n[cyan]To enable and start this service now, run:[/cyan]")
+        console.print(f"  systemctl --user daemon-reload")
+        console.print(f"  systemctl --user enable --now {unit_name}")
+        console.print(f"  systemctl --user status {unit_name}")
+    else:
+        console.print(f"[bold cyan]# Systemd User Service Unit ({unit_name}):[/bold cyan]\n")
+        console.print(unit_content)
+        console.print(f"[dim]# Tip: Run 'pan-gdrive-sync job systemd --mode {mode} --write' to install automatically.[/dim]")
 
 
 @cli.command("history")

@@ -199,14 +199,107 @@ class BaiduClient:
 
         return resp, size, md5
 
+    BAIDU_MAX_SINGLE_UPLOAD = 2 * 1024 * 1024 * 1024  # 2 GB (Baidu PCS API single upload limit)
+    BAIDU_DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024        # 16 MB per slice
+    BAIDU_MAX_BLOCKS = 1024                            # PCS createsuperfile allows up to 1024 blocks
+
+    def upload_tmpfile(self, chunk: bytes, filename: str = "chunk") -> str:
+        """Upload a single sliced block as a temporary file to Baidu PCS.
+
+        Returns MD5 checksum of the uploaded slice.
+        """
+        url = (
+            f"{self.PCS_API}/file"
+            f"?method=upload"
+            f"&app_id={self.cfg.data['baidu']['app_id']}"
+            f"&type=tmpfile"
+        )
+        files = {"file": (filename, chunk)}
+        resp = self.session.post(url, files=files, timeout=300)
+        data = self._check(resp)
+        return data["md5"]
+
+    def create_superfile(
+        self,
+        remote_path: str,
+        block_list: List[str],
+        ondup: str = "overwrite",
+    ) -> Dict[str, Any]:
+        """Combine uploaded sliced blocks into a full superfile on Baidu PCS."""
+        path = normalize_path(remote_path)
+        url = (
+            f"{self.PCS_API}/file"
+            f"?method=createsuperfile"
+            f"&app_id={self.cfg.data['baidu']['app_id']}"
+            f"&ondup={ondup}"
+            f"&path={urllib.parse.quote(path)}"
+        )
+        param_json = json.dumps({"block_list": block_list})
+        resp = self.session.post(url, data={"param": param_json}, timeout=120)
+        return self._check(resp)
+
+    def upload_sliced_stream(
+        self,
+        stream: BinaryIO,
+        remote_path: str,
+        size: Optional[int] = None,
+        chunk_size: int = BAIDU_DEFAULT_CHUNK_SIZE,
+        ondup: str = "overwrite",
+    ) -> Dict[str, Any]:
+        """Upload a large stream to Baidu PCS using sliced block upload and createsuperfile."""
+        path = normalize_path(remote_path)
+        filename = os.path.basename(path)
+        parent = os.path.dirname(path)
+        if parent and parent != "/":
+            self.mkdir(parent, parents=True)
+
+        # Dynamic chunk size calculation if size exceeds standard max blocks (1024)
+        if size and size > chunk_size * self.BAIDU_MAX_BLOCKS:
+            chunk_size = max(chunk_size, ((size // 1000) // (1024 * 1024) + 1) * 1024 * 1024)
+
+        block_list: List[str] = []
+        part_idx = 0
+
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+            part_idx += 1
+            part_name = f"{filename}.part{part_idx}"
+            md5_hash = self.upload_tmpfile(chunk, filename=part_name)
+            block_list.append(md5_hash)
+
+        if not block_list:
+            url = (
+                f"{self.PCS_API}/file"
+                f"?method=upload"
+                f"&app_id={self.cfg.data['baidu']['app_id']}"
+                f"&ondup={ondup}"
+                f"&path={urllib.parse.quote(path)}"
+            )
+            files = {"file": (filename, b"")}
+            resp = self.session.post(url, files=files, timeout=60)
+            return self._check(resp)
+
+        if len(block_list) == 1:
+            # createsuperfile requires at least 2 blocks; upload an empty terminator part
+            empty_md5 = self.upload_tmpfile(b"", filename=f"{filename}.part_end")
+            block_list.append(empty_md5)
+
+        return self.create_superfile(path, block_list, ondup=ondup)
+
     def upload_stream(
         self,
         stream: BinaryIO,
         remote_path: str,
         size: Optional[int] = None,
         ondup: str = "overwrite",
+        force_sliced: bool = False,
     ) -> Dict[str, Any]:
-        """Stream upload to Baidu Netdisk."""
+        """Stream upload to Baidu Netdisk.
+
+        Automatically uses sliced chunked upload (createsuperfile) when size > 2GB.
+        """
         path = normalize_path(remote_path)
         filename = os.path.basename(path)
         parent = os.path.dirname(path)
@@ -232,6 +325,10 @@ class BaiduClient:
             # Baidu PCS can create a duplicate "newcopy" for ondup=skip.  Once
             # this call proceeds, overwrite makes the operation a replacement.
             ondup = "overwrite"
+
+        # If size exceeds 2GB (or explicitly requested), use sliced chunk upload
+        if (size is not None and size > self.BAIDU_MAX_SINGLE_UPLOAD) or force_sliced:
+            return self.upload_sliced_stream(stream, path, size=size, ondup=ondup)
 
         url = (
             f"{self.PCS_API}/file"
