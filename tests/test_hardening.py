@@ -128,6 +128,10 @@ class TestWebBasicAuth(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
 
+            # Query param auth fallback for SSE/EventSource
+            response_param = client.get(f"/api/status?auth={token}")
+            self.assertEqual(response_param.status_code, 200)
+
     def test_transfer_and_job_apis_reject_invalid_mode(self):
         from pangdrive.web.app import create_app
 

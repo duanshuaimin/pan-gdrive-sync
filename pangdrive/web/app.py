@@ -1,5 +1,6 @@
 """Flask Web Application for pan-gdrive-sync."""
 
+import base64
 import datetime
 import json
 import os
@@ -45,16 +46,28 @@ def create_app() -> Flask:
         if not request.path.startswith("/api/"):
             return None
         auth = request.authorization
+        username = ""
+        password = ""
+        if auth and auth.username:
+            username = auth.username
+            password = auth.password or ""
+        elif not auth and request.args.get("auth"):
+            try:
+                raw = base64.b64decode(request.args.get("auth")).decode("utf-8")
+                if ":" in raw:
+                    username, password = raw.split(":", 1)
+            except Exception:
+                pass
+
         web = config.data.get("web") or {}
-        username = web.get("username") or ""
+        expected_user = web.get("username") or ""
         password_hash = web.get("password_hash") or ""
-        if not username or not password_hash:
+        if not expected_user or not password_hash:
             return jsonify({"ok": False, "error": "Web auth not configured"}), 503
         if (
-            auth
-            and auth.username == username
-            and auth.password
-            and check_password_hash(password_hash, auth.password)
+            username == expected_user
+            and password
+            and check_password_hash(password_hash, password)
         ):
             return None
         return Response(

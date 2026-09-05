@@ -39,20 +39,156 @@ function showToast(msg, type = "info") {
 }
 
 // ==========================================
+// Web Basic Auth & Session Management
+// ==========================================
+function getAuthHeader() {
+  return sessionStorage.getItem("pgsync_auth") || localStorage.getItem("pgsync_auth") || "";
+}
+
+function setAuthHeader(token, username = "") {
+  if (token) {
+    sessionStorage.setItem("pgsync_auth", token);
+    localStorage.setItem("pgsync_auth", token);
+    if (username) {
+      sessionStorage.setItem("pgsync_user", username);
+      localStorage.setItem("pgsync_user", username);
+    }
+  } else {
+    sessionStorage.removeItem("pgsync_auth");
+    localStorage.removeItem("pgsync_auth");
+    sessionStorage.removeItem("pgsync_user");
+    localStorage.removeItem("pgsync_user");
+  }
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  const badge = document.getElementById("userAuthBadge");
+  const nameEl = document.getElementById("userAuthName");
+  const token = getAuthHeader();
+  const username = sessionStorage.getItem("pgsync_user") || localStorage.getItem("pgsync_user") || "admin";
+  if (badge) {
+    if (token) {
+      badge.style.display = "flex";
+      if (nameEl) nameEl.textContent = username;
+    } else {
+      badge.style.display = "none";
+    }
+  }
+}
+
+function openLoginModal(errorText = "") {
+  const modal = document.getElementById("loginModal");
+  if (modal) {
+    modal.classList.add("open");
+    const errEl = document.getElementById("loginErrorMsg");
+    if (errEl) {
+      if (errorText) {
+        errEl.textContent = errorText;
+        errEl.style.display = "block";
+      } else {
+        errEl.style.display = "none";
+      }
+    }
+    const pwd = document.getElementById("loginPassword");
+    if (pwd) {
+      pwd.value = "";
+      setTimeout(() => pwd.focus(), 100);
+    }
+  }
+}
+
+function closeLoginModal() {
+  const modal = document.getElementById("loginModal");
+  if (modal) modal.classList.remove("open");
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const uInput = document.getElementById("loginUsername");
+  const pInput = document.getElementById("loginPassword");
+  const btn = document.getElementById("loginSubmitBtn");
+  const errEl = document.getElementById("loginErrorMsg");
+
+  const u = uInput ? uInput.value.trim() : "";
+  const p = pInput ? pInput.value : "";
+  if (!u || !p) return;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span>验证中...</span>`;
+  }
+  if (errEl) errEl.style.display = "none";
+
+  const basicToken = "Basic " + btoa(unescape(encodeURIComponent(u + ":" + p)));
+
+  try {
+    const res = await fetch("/api/status", {
+      headers: { "Authorization": basicToken }
+    });
+    if (res.status === 200) {
+      const data = await res.json();
+      setAuthHeader(basicToken, u);
+      closeLoginModal();
+      showToast(`登录成功，欢迎 ${u}！`, "success");
+      state.status = data;
+      renderStatusUI(data);
+      loadFiles("baidu");
+      loadFiles("gdrive");
+      loadJobs();
+      initTaskStream();
+    } else {
+      if (errEl) {
+        errEl.textContent = "用户名或密码错误，请核对后重试";
+        errEl.style.display = "block";
+      }
+    }
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = `登录请求失败: ${err.message}`;
+      errEl.style.display = "block";
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg><span>登 录</span>`;
+    }
+  }
+}
+
+function logoutWeb() {
+  setAuthHeader(null);
+  showToast("已退出登录", "info");
+  openLoginModal("已安全退出登录，请重新输入账号密码");
+}
+
+// ==========================================
 // API Helpers
 // ==========================================
 async function fetchAPI(url, options = {}) {
   try {
+    const auth = getAuthHeader();
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (auth) {
+      headers["Authorization"] = auth;
+    }
     const opts = {
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
       ...options,
+      headers,
     };
     const res = await fetch(url, opts);
+    if (res.status === 401) {
+      setAuthHeader(null);
+      openLoginModal("登录已失效或未认证，请重新登录");
+      throw new Error("未授权访问 (401)");
+    }
     const data = await res.json();
     return data;
   } catch (err) {
-    showToast(`网络请求失败: ${err.message}`, "error");
+    if (err.message !== "未授权访问 (401)") {
+      showToast(`网络请求失败: ${err.message}`, "error");
+    }
     throw err;
   }
 }
@@ -60,14 +196,11 @@ async function fetchAPI(url, options = {}) {
 // ==========================================
 // Status & Quota
 // ==========================================
-async function loadStatus() {
-  try {
-    const res = await fetchAPI("/api/status");
-    state.status = res;
-
-    // Baidu indicator
-    const bDot = document.getElementById("baiduStatusDot");
-    const bText = document.getElementById("baiduStatusText");
+function renderStatusUI(res) {
+  // Baidu indicator
+  const bDot = document.getElementById("baiduStatusDot");
+  const bText = document.getElementById("baiduStatusText");
+  if (bDot && bText) {
     if (res.baidu && res.baidu.authenticated) {
       bDot.className = "dot connected";
       bText.innerText = `百度网盘: ${res.baidu.username} (${res.baidu.vip_name})`;
@@ -75,10 +208,12 @@ async function loadStatus() {
       bDot.className = "dot";
       bText.innerText = "百度网盘: 未连接";
     }
+  }
 
-    // GDrive indicator
-    const gDot = document.getElementById("gdriveStatusDot");
-    const gText = document.getElementById("gdriveStatusText");
+  // GDrive indicator
+  const gDot = document.getElementById("gdriveStatusDot");
+  const gText = document.getElementById("gdriveStatusText");
+  if (gDot && gText) {
     if (res.gdrive && res.gdrive.authenticated) {
       gDot.className = "dot connected";
       gText.innerText = `Google Drive: ${res.gdrive.email}`;
@@ -86,8 +221,16 @@ async function loadStatus() {
       gDot.className = "dot";
       gText.innerText = "Google Drive: 未连接";
     }
+  }
 
-    renderQuotaModal();
+  renderQuotaModal();
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetchAPI("/api/status");
+    state.status = res;
+    renderStatusUI(res);
   } catch (err) {
     console.error("Failed to load status:", err);
   }
@@ -456,7 +599,13 @@ async function confirmTransfer() {
 // Task Manager & SSE Stream
 // ==========================================
 function initTaskStream() {
-  const eventSource = new EventSource("/api/tasks/events");
+  const auth = getAuthHeader();
+  let url = "/api/tasks/events";
+  if (auth) {
+    const raw = auth.replace("Basic ", "").trim();
+    url += "?auth=" + encodeURIComponent(raw);
+  }
+  const eventSource = new EventSource(url);
 
   eventSource.onmessage = (event) => {
     try {
@@ -933,6 +1082,28 @@ function closeModal(id) {
 // Initialization
 // ==========================================
 window.addEventListener("DOMContentLoaded", async () => {
+  updateAuthUI();
+  const token = getAuthHeader();
+  if (!token) {
+    try {
+      const probe = await fetch("/api/status", { credentials: "same-origin" });
+      if (probe.status === 200) {
+        const data = await probe.json();
+        state.status = data;
+        renderStatusUI(data);
+        loadFiles("baidu");
+        loadFiles("gdrive");
+        loadJobs();
+        initTaskStream();
+        return;
+      }
+    } catch (e) {
+      // ignore
+    }
+    openLoginModal();
+    return;
+  }
+
   await loadStatus();
   loadFiles("baidu");
   loadFiles("gdrive");
