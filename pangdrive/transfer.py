@@ -142,6 +142,13 @@ class TransferEngine:
                 except Exception:
                     pass
 
+            # If target basename has no extension while source filename has one, treat as folder
+            if not is_dst_dir:
+                src_ext = os.path.splitext(filename)[1]
+                dst_ext = os.path.splitext(os.path.basename(dst_p))[1]
+                if src_ext and not dst_ext:
+                    is_dst_dir = True
+
         # Ensure destination path includes filename if destination was specified as directory
         if is_dst_dir or dst_p == "/":
             dst_p = f"{dst_p}/{filename}".replace("//", "/")

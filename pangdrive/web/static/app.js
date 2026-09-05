@@ -508,7 +508,10 @@ function openTransferPrompt(srcDrive, dstDrive, mode = "copy") {
     sourceUri = `${srcDrive}:${srcState.path}`;
   }
 
-  const destUri = `${dstDrive}:${dstState.path}`;
+  let destUri = `${dstDrive}:${dstState.path}`;
+  if (dstState.path !== "/" && !destUri.endsWith("/")) {
+    destUri += "/";
+  }
 
   srcInput.value = sourceUri;
   dstInput.value = destUri;
@@ -530,7 +533,11 @@ function openTransferSingle(srcDrive, path, isDir) {
 
   modalTitle.innerText = `${isDir ? "同步目录" : "传输文件"}: ${srcDrive.toUpperCase()} ➔ ${dstDrive.toUpperCase()}`;
   srcInput.value = `${srcDrive}:${path}`;
-  dstInput.value = `${dstDrive}:${dstPath}`;
+  let destUri = `${dstDrive}:${dstPath}`;
+  if (dstPath !== "/" && !destUri.endsWith("/")) {
+    destUri += "/";
+  }
+  dstInput.value = destUri;
   modeSelect.value = mode;
 
   modal.classList.add("open");
