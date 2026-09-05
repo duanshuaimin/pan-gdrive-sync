@@ -66,7 +66,20 @@ class ProgressStreamWrapper:
     def read(self, size: int = -1) -> bytes:
         if self.cancel_event and self.cancel_event.is_set():
             raise TransferCancelledError("Transfer cancelled by user")
-        chunk = self.raw.read(size)
+        if size is None or size < 0:
+            chunk = self.raw.read()
+        else:
+            chunks = []
+            remaining = size
+            while remaining > 0:
+                if self.cancel_event and self.cancel_event.is_set():
+                    raise TransferCancelledError("Transfer cancelled by user")
+                part = self.raw.read(remaining)
+                if not part:
+                    break
+                chunks.append(part)
+                remaining -= len(part)
+            chunk = b"".join(chunks) if chunks else b""
         if chunk:
             n = len(chunk)
             self.read_bytes += n
@@ -111,6 +124,23 @@ class TransferEngine:
         is_dst_dir = dst_path.endswith("/") or dst_path.endswith("\\") or dst_path == ""
         dst_p = normalize_path(dst_path)
         filename = os.path.basename(src_p)
+
+        # Check if destination exists as a folder in the target provider
+        if not is_dst_dir and dst_p != "/":
+            if dst_provider == "gdrive":
+                try:
+                    fid = self.gdrive.resolve_path(dst_p, create_missing=False)
+                    if fid:
+                        is_dst_dir = True
+                except Exception:
+                    pass
+            elif dst_provider == "baidu":
+                try:
+                    meta = self.baidu.meta(dst_p)
+                    if meta and meta[0].get("isdir"):
+                        is_dst_dir = True
+                except Exception:
+                    pass
 
         # Ensure destination path includes filename if destination was specified as directory
         if is_dst_dir or dst_p == "/":
@@ -206,7 +236,7 @@ class TransferEngine:
                 try:
                     with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
                         tmp_path = tmp_f.name
-                        for chunk in resp.iter_content(chunk_size=65536):
+                        for chunk in resp.iter_content(chunk_size=1048576):
                             if cancel_event and cancel_event.is_set():
                                 raise TransferCancelledError("Transfer cancelled by user")
                             if chunk:
@@ -290,7 +320,7 @@ class TransferEngine:
                 try:
                     with tempfile.NamedTemporaryFile("wb", delete=False) as tmp_f:
                         tmp_path = tmp_f.name
-                        for chunk in resp.iter_content(chunk_size=65536):
+                        for chunk in resp.iter_content(chunk_size=1048576):
                             if cancel_event and cancel_event.is_set():
                                 raise TransferCancelledError("Transfer cancelled by user")
                             if chunk:

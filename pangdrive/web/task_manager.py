@@ -287,23 +287,33 @@ class TaskManager:
             engine = TransferEngine()
             ondup = "skip" if task.skip_existing else "overwrite"
 
+            stream_mode = getattr(self.config, "data", {}).get("transfer", {}).get("stream_mode", True)
+            use_disk_cache = not stream_mode
+            task._last_broadcast = 0.0
+
             if task.mode == "sync":
                 def sync_cb(ev: dict):
+                    now = time.time()
                     if ev.get("event") == "file_start":
                         task.current_file = ev.get("current_file", "")
                         task.file_index = ev.get("file_index", 0)
                         task.total_files = ev.get("total_files", 1)
+                        self._persist_task_progress(task, force=True)
+                        self.broadcast()
                     elif ev.get("event") == "chunk":
                         task.update_bytes(
                             ev.get("chunk_len", 0),
                             ev.get("transferred_bytes", 0),
                             ev.get("total_bytes", 0),
                         )
+                        if now - task._last_broadcast >= 0.5:
+                            task._last_broadcast = now
+                            self._persist_task_progress(task, force=False)
+                            self.broadcast()
                     elif ev.get("event") == "file_complete":
                         task.transferred_bytes = ev.get("transferred_bytes", 0)
-
-                    self._persist_task_progress(task, force=False)
-                    self.broadcast()
+                        self._persist_task_progress(task, force=True)
+                        self.broadcast()
 
                 res = engine.sync_directory(
                     src_provider=src_p,
@@ -315,6 +325,7 @@ class TaskManager:
                     progress_callback=sync_cb,
                     cancel_event=task.cancel_event,
                     show_console_progress=False,
+                    use_disk_cache=use_disk_cache,
                 )
                 task.total_bytes = res.get("total_bytes", task.total_bytes)
                 task.transferred_bytes = task.total_bytes
@@ -326,8 +337,11 @@ class TaskManager:
 
                 def file_cb(chunk_len, read_bytes, total_bytes):
                     task.update_bytes(chunk_len, read_bytes, total_bytes)
-                    self._persist_task_progress(task, force=False)
-                    self.broadcast()
+                    now = time.time()
+                    if now - task._last_broadcast >= 0.5:
+                        task._last_broadcast = now
+                        self._persist_task_progress(task, force=False)
+                        self.broadcast()
 
                 engine.transfer_file(
                     src_provider=src_p,
@@ -339,6 +353,7 @@ class TaskManager:
                     task_id=None,
                     callback=file_cb,
                     cancel_event=task.cancel_event,
+                    use_disk_cache=use_disk_cache,
                 )
                 if task.total_bytes > 0:
                     task.transferred_bytes = task.total_bytes

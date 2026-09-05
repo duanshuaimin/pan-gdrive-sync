@@ -473,11 +473,39 @@ class GoogleDriveClient:
             raise RuntimeError("Google Drive did not return resumable upload Location URL")
 
         # Stream upload to location URL
-        upload_headers = {"Content-Type": mime_type}
-        if size is not None:
-            upload_headers["Content-Length"] = str(size)
+        chunk_size = 4 * 1024 * 1024  # 4MB default
+        if hasattr(self, "cfg") and hasattr(self.cfg, "data"):
+            chunk_size = self.cfg.data.get("transfer", {}).get("chunk_size", chunk_size)
+        # Google Drive resumable upload chunk size must be multiple of 256KB
+        chunk_size = max(256 * 1024, (chunk_size // (256 * 1024)) * (256 * 1024))
 
-        put_resp = self.session.put(location_url, headers=upload_headers, data=stream, timeout=600)
-        return self._check(put_resp)
+        if size is not None and size > 0:
+            offset = 0
+            while offset < size:
+                bytes_to_read = min(chunk_size, size - offset)
+                chunk = stream.read(bytes_to_read)
+                if not chunk:
+                    break
+                chunk_len = len(chunk)
+                end_offset = offset + chunk_len - 1
+                headers = {
+                    "Content-Range": f"bytes {offset}-{end_offset}/{size}",
+                    "Content-Length": str(chunk_len),
+                    "Content-Type": mime_type,
+                }
+                put_resp = self.session.put(location_url, headers=headers, data=chunk, timeout=300)
+                if put_resp.status_code in (200, 201):
+                    return self._check(put_resp)
+                elif put_resp.status_code == 308:
+                    offset += chunk_len
+                else:
+                    return self._check(put_resp)
+            raise RuntimeError("Google Drive upload finished without 200/201 confirmation")
+        else:
+            upload_headers = {"Content-Type": mime_type}
+            if size is not None:
+                upload_headers["Content-Length"] = str(size)
+            put_resp = self.session.put(location_url, headers=upload_headers, data=stream, timeout=600)
+            return self._check(put_resp)
 
 

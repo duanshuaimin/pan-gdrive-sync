@@ -81,10 +81,17 @@ def split_storage_uri(uri: str) -> tuple[str, str]:
     if ":" in uri:
         provider, path = uri.split(":", 1)
         provider = provider.lower().strip()
+        is_dir = path.endswith("/") or path.endswith("\\")
         if provider in ("baidu", "pan", "bdpan", "baidupan"):
-            return "baidu", normalize_path(path)
+            npath = normalize_path(path)
+            if is_dir and npath != "/" and not npath.endswith("/"):
+                npath += "/"
+            return "baidu", npath
         elif provider in ("gdrive", "google", "drive", "googledrive"):
-            return "gdrive", normalize_path(path)
+            npath = normalize_path(path)
+            if is_dir and npath != "/" and not npath.endswith("/"):
+                npath += "/"
+            return "gdrive", npath
         else:
             raise ValueError(f"Unknown storage provider prefix: {provider}. Must be 'baidu:' or 'gdrive:'")
     else:
