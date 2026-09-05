@@ -208,13 +208,15 @@ class GoogleDriveClient:
         If create_missing is True, non-existent directories will be created.
         """
         path = normalize_path(path)
+        cfg = getattr(self, "cfg", None)
+        root_folder = (cfg.data.get("gdrive", {}).get("root_folder_id") if cfg and hasattr(cfg, "data") else None) or "root"
         if path == "/":
-            return "root"
+            return root_folder
         if path in self._path_cache:
             return self._path_cache[path]
 
         parts = [p for p in path.strip("/").split("/") if p]
-        curr_id = "root"
+        curr_id = root_folder
         curr_path = ""
 
         for part in parts:
@@ -223,15 +225,26 @@ class GoogleDriveClient:
                 curr_id = self._path_cache[curr_path]
                 continue
 
-            query = (
-                f"name = '{escape_drive_query_value(part)}' and '{curr_id}' in parents "
-                f"and mimeType = '{self.FOLDER_MIME}' and trashed = false"
-            )
+            if curr_id in ("root", root_folder):
+                query = (
+                    f"name = '{escape_drive_query_value(part)}' and ('{curr_id}' in parents or sharedWithMe = true) "
+                    f"and mimeType = '{self.FOLDER_MIME}' and trashed = false"
+                )
+            else:
+                query = (
+                    f"name = '{escape_drive_query_value(part)}' and '{curr_id}' in parents "
+                    f"and mimeType = '{self.FOLDER_MIME}' and trashed = false"
+                )
             url = f"{self.DRIVE_API_BASE}/files"
             resp = self.session.get(
                 url,
                 headers=self._get_headers(),
-                params={"q": query, "fields": "files(id, name)"},
+                params={
+                    "q": query,
+                    "fields": "files(id, name)",
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
                 timeout=15,
             )
             data = self._check(resp)
@@ -246,7 +259,7 @@ class GoogleDriveClient:
                     "parents": [curr_id],
                 }
                 c_resp = self.session.post(
-                    f"{self.DRIVE_API_BASE}/files",
+                    f"{self.DRIVE_API_BASE}/files?supportsAllDrives=true",
                     headers={**self._get_headers(), "Content-Type": "application/json"},
                     data=json.dumps(folder_meta),
                     timeout=15,
@@ -263,9 +276,14 @@ class GoogleDriveClient:
     def list_dir(self, remote_path: str = "/", folder_id: Optional[str] = None) -> List[Dict[str, Any]]:
         path = normalize_path(remote_path)
         target_id = folder_id or self.resolve_path(path)
+        cfg = getattr(self, "cfg", None)
+        root_folder = (cfg.data.get("gdrive", {}).get("root_folder_id") if cfg and hasattr(cfg, "data") else None) or "root"
 
         url = f"{self.DRIVE_API_BASE}/files"
-        query = f"'{target_id}' in parents and trashed = false"
+        if target_id in ("root", root_folder):
+            query = f"('{target_id}' in parents or sharedWithMe = true) and trashed = false"
+        else:
+            query = f"'{target_id}' in parents and trashed = false"
         items = []
         page_token = None
         while True:
@@ -273,6 +291,8 @@ class GoogleDriveClient:
                 "q": query,
                 "fields": "nextPageToken, files(id, name, mimeType, size, md5Checksum, modifiedTime, createdTime)",
                 "pageSize": 1000,
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
             }
             if page_token:
                 params["pageToken"] = page_token
@@ -321,7 +341,12 @@ class GoogleDriveClient:
             resp = self.session.get(
                 f"{self.DRIVE_API_BASE}/files",
                 headers=self._get_headers(),
-                params={"q": q, "fields": "files(id)"},
+                params={
+                    "q": q,
+                    "fields": "files(id)",
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
                 timeout=15,
             )
             files = self._check(resp).get("files", [])
@@ -332,7 +357,7 @@ class GoogleDriveClient:
         if not file_id:
             raise ValueError("Either file_id or remote_path must be provided to delete")
 
-        url = f"{self.DRIVE_API_BASE}/files/{file_id}"
+        url = f"{self.DRIVE_API_BASE}/files/{file_id}?supportsAllDrives=true"
         resp = self.session.delete(url, headers=self._get_headers(), timeout=15)
         if resp.status_code in (200, 204):
             return True
@@ -349,7 +374,10 @@ class GoogleDriveClient:
         meta_resp = self.session.get(
             meta_url,
             headers=self._get_headers(),
-            params={"fields": "id, name, size, md5Checksum, mimeType"},
+            params={
+                "fields": "id, name, size, md5Checksum, mimeType",
+                "supportsAllDrives": "true",
+            },
             timeout=15,
         )
         meta = self._check(meta_resp)
@@ -359,7 +387,7 @@ class GoogleDriveClient:
 
         if self.is_google_doc(mime):
             export_mime, _ext = self.get_export_info(mime)
-            url = f"{self.DRIVE_API_BASE}/files/{file_id}/export?mimeType={urllib.parse.quote(export_mime)}"
+            url = f"{self.DRIVE_API_BASE}/files/{file_id}/export?mimeType={urllib.parse.quote(export_mime)}&supportsAllDrives=true"
             resp = self.session.get(url, headers=self._get_headers(), stream=True, timeout=60)
             if resp.status_code != 200:
                 self._check(resp)
@@ -370,7 +398,7 @@ class GoogleDriveClient:
         size = int(meta.get("size", 0))
         md5 = meta.get("md5Checksum", "")
 
-        url = f"{self.DRIVE_API_BASE}/files/{file_id}?alt=media"
+        url = f"{self.DRIVE_API_BASE}/files/{file_id}?alt=media&supportsAllDrives=true"
         resp = self.session.get(url, headers=self._get_headers(), stream=True, timeout=60)
         if resp.status_code != 200:
             self._check(resp)
@@ -399,7 +427,12 @@ class GoogleDriveClient:
         chk_resp = self.session.get(
             f"{self.DRIVE_API_BASE}/files",
             headers=self._get_headers(),
-            params={"q": query, "fields": "files(id, size, md5Checksum)"},
+            params={
+                "q": query,
+                "fields": "files(id, size, md5Checksum)",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
             timeout=15,
         )
         existing = self._check(chk_resp).get("files", [])
@@ -418,7 +451,7 @@ class GoogleDriveClient:
                     self.delete(file_id=old["id"])
 
         # Initiate Resumable Upload
-        init_url = f"{self.UPLOAD_API_BASE}/files?uploadType=resumable"
+        init_url = f"{self.UPLOAD_API_BASE}/files?uploadType=resumable&supportsAllDrives=true"
         file_metadata = {
             "name": filename,
             "parents": [parent_id],
