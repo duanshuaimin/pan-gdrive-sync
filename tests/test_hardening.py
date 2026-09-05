@@ -596,6 +596,77 @@ class TestSkipBySize(unittest.TestCase):
         client.delete.assert_not_called()
         client.session.post.assert_not_called()
 
+    def test_gdrive_upload_uses_server_range_after_partial_chunk_acceptance(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        class ReadOnlyStream:
+            def __init__(self, content):
+                self.content = content
+                self.offset = 0
+
+            def read(self, size=-1):
+                if size < 0:
+                    size = len(self.content) - self.offset
+                chunk = self.content[self.offset : self.offset + size]
+                self.offset += len(chunk)
+                return chunk
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"transfer": {"chunk_size": 256 * 1024}}
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(side_effect=[{"files": []}, {"id": "new-id"}])
+        client.session.post.return_value.status_code = 200
+        client.session.post.return_value.headers = {"Location": "https://upload.example"}
+        partial = mock.MagicMock(status_code=308, headers={"Range": "bytes=0-100"})
+        complete = mock.MagicMock(status_code=200)
+        client.session.put.side_effect = [partial, complete]
+        content = b"x" * (256 * 1024)
+
+        result = client.upload_stream(ReadOnlyStream(content), "/dest/file.txt", size=len(content))
+
+        self.assertEqual(result, {"id": "new-id"})
+        second_request = client.session.put.call_args_list[1]
+        self.assertEqual(
+            second_request.kwargs["headers"]["Content-Range"],
+            f"bytes 101-{len(content) - 1}/{len(content)}",
+        )
+        self.assertEqual(second_request.kwargs["data"], content[101:])
+
+    def test_gdrive_upload_retries_transient_chunk_failure(self):
+        from pangdrive.gdrive_client import GoogleDriveClient
+
+        client = GoogleDriveClient.__new__(GoogleDriveClient)
+        client.cfg = mock.MagicMock()
+        client.cfg.data = {"transfer": {"chunk_size": 256 * 1024}}
+        client.session = mock.MagicMock()
+        client.resolve_path = mock.MagicMock(return_value="parent-id")
+        client._get_headers = mock.MagicMock(return_value={})
+        client._check = mock.MagicMock(side_effect=[{"files": []}, {"id": "new-id"}])
+        client.session.post.return_value.status_code = 200
+        client.session.post.return_value.headers = {"Location": "https://upload.example"}
+        client.session.put.side_effect = [
+            mock.MagicMock(status_code=503),
+            mock.MagicMock(status_code=200),
+        ]
+
+        with mock.patch("pangdrive.gdrive_client.time.sleep") as sleep:
+            result = client.upload_stream(
+                io.BytesIO(b"x" * (256 * 1024)),
+                "/dest/file.txt",
+                size=256 * 1024,
+            )
+
+        self.assertEqual(result, {"id": "new-id"})
+        self.assertEqual(client.session.put.call_count, 2)
+        self.assertEqual(
+            client.session.put.call_args_list[0].kwargs["data"],
+            client.session.put.call_args_list[1].kwargs["data"],
+        )
+        sleep.assert_called_once()
+
     def test_baidu_upload_skip_replaces_size_mismatch(self):
         from pangdrive.baidu_client import BaiduClient
 

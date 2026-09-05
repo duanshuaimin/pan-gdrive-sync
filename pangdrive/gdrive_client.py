@@ -481,11 +481,17 @@ class GoogleDriveClient:
 
         if size is not None and size > 0:
             offset = 0
+            pending = b""
+            pending_offset = 0
             while offset < size:
-                bytes_to_read = min(chunk_size, size - offset)
-                chunk = stream.read(bytes_to_read)
-                if not chunk:
-                    break
+                if not pending:
+                    bytes_to_read = min(chunk_size, size - offset)
+                    pending = stream.read(bytes_to_read)
+                    pending_offset = offset
+                    if not pending:
+                        break
+
+                chunk = pending[offset - pending_offset :]
                 chunk_len = len(chunk)
                 end_offset = offset + chunk_len - 1
                 headers = {
@@ -493,11 +499,31 @@ class GoogleDriveClient:
                     "Content-Length": str(chunk_len),
                     "Content-Type": mime_type,
                 }
-                put_resp = self.session.put(location_url, headers=headers, data=chunk, timeout=300)
+                for retry_count in range(3):
+                    put_resp = self.session.put(location_url, headers=headers, data=chunk, timeout=300)
+                    if put_resp.status_code not in (429, 500, 502, 503):
+                        break
+                    if retry_count == 2:
+                        return self._check(put_resp)
+                    time.sleep(0.5 * (2**retry_count))
+
                 if put_resp.status_code in (200, 201):
                     return self._check(put_resp)
                 elif put_resp.status_code == 308:
-                    offset += chunk_len
+                    range_hdr = put_resp.headers.get("Range") or put_resp.headers.get("range")
+                    if range_hdr and range_hdr.startswith("bytes=") and "-" in range_hdr:
+                        try:
+                            committed_offset = int(range_hdr.rsplit("-", 1)[1]) + 1
+                        except ValueError:
+                            offset += chunk_len
+                        else:
+                            if not pending_offset <= committed_offset <= pending_offset + len(pending):
+                                raise RuntimeError("Google Drive returned an invalid resumable upload Range")
+                            offset = committed_offset
+                    else:
+                        offset += chunk_len
+                    if offset >= pending_offset + len(pending):
+                        pending = b""
                 else:
                     return self._check(put_resp)
             raise RuntimeError("Google Drive upload finished without 200/201 confirmation")
